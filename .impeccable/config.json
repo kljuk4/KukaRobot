@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "krl-simulator.html"
+        ],
+        "createdAt": "2026-11-10T20:48:10.889Z",
+        "reason": "Claude: border-left is the editor's current/error line marker (#hl, #errhl), a code-editor convention, not a card accent"
+      }
+    ]
+  }
+}

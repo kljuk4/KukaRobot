@@ -1,0 +1,1239 @@
+<!doctype html>
+<html lang="sl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KRL simulator</title>
+<style>
+:root{--bg:#15191f;--panel:#1d232b;--line:#2c343f;--text:#e6e9ee;--muted:#8b95a3;--accent:#ff6a13;--ok:#3ecf8e;--err:#ff5a5f}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:14px/1.4 system-ui,"Segoe UI",sans-serif}
+#app{display:grid;grid-template-columns:var(--left,460px) 6px 1fr;height:100vh}
+#split{cursor:col-resize;background:var(--line);touch-action:none}#split:hover,#split.drag{background:var(--accent)}
+.grip{position:absolute;left:0;top:0;width:18px;height:18px;cursor:nwse-resize;touch-action:none;z-index:2;border-top:3px solid var(--muted);border-left:3px solid var(--muted);border-radius:8px 0 0 0}
+.grip:hover{border-color:var(--accent)}#paperBox.big .grip{display:none}
+#left{display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--panel);min-height:0}
+header{padding:10px 12px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:baseline}
+header b{font-size:16px}
+.muted{color:var(--muted);font-size:12px}
+.bar{display:flex;gap:6px;padding:8px 12px;align-items:center;flex-wrap:wrap}
+button,select,input{font:inherit;color:var(--text);background:#262d37;border:1px solid var(--line);border-radius:6px;padding:5px 10px}
+button{cursor:pointer}button:hover{border-color:#4a5563}
+button.primary{background:var(--accent);border-color:var(--accent);color:#111;font-weight:600}
+#editorWrap{position:relative;flex:1;min-height:200px;margin:0 12px;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:linear-gradient(to right,#0d1014 40px,#11151a 40px)}
+#gutter{position:absolute;left:0;top:0;width:40px;padding:8px 6px 8px 0;text-align:right;color:#7d8896;font:13px/20px Consolas,monospace;white-space:pre;user-select:none}
+.hl{position:absolute;left:40px;right:0;height:20px;display:none;pointer-events:none}
+#hl{background:rgba(255,106,19,.22);border-left:3px solid var(--accent)}
+#errhl{background:rgba(255,90,95,.25);border-left:3px solid var(--err)}
+#code{position:absolute;left:40px;top:0;width:calc(100% - 40px);height:100%;resize:none;border:0;outline:0;border-radius:0;background:transparent;color:#dfe6ee;font:13px/20px Consolas,monospace;padding:8px;white-space:pre;overflow:auto;tab-size:2}
+#log{height:130px;min-height:50px;resize:vertical;overflow:auto;margin:8px 12px;border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:12px/1.5 Consolas,monospace;background:#11151a}
+#log div{white-space:pre-wrap}.e{color:var(--err);cursor:pointer}.i{color:var(--muted)}.ok{color:var(--ok)}
+details{margin:0 12px 10px}summary{cursor:pointer;color:var(--muted)}
+.set{display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center;margin-top:8px}.set input{width:100%}
+#view{position:relative;min-width:0}
+#three{position:absolute;inset:0}
+#status{position:absolute;left:12px;top:12px;background:rgba(21,25,31,.88);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font:12px/1.55 Consolas,monospace;min-width:220px}
+#status .row{display:flex;justify-content:space-between;gap:14px}
+#status h4{margin:6px 0 2px;font:600 11px system-ui;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+#press{height:6px;background:#2a313b;border-radius:3px;margin-top:4px;overflow:hidden}#press i{display:block;height:100%;width:0;background:var(--ok)}
+#banner{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);background:var(--err);color:#fff;padding:8px 14px;border-radius:8px;display:none;max-width:60%;font-weight:600}
+#hint{position:absolute;left:12px;bottom:12px;color:var(--muted);font-size:12px;background:rgba(21,25,31,.8);padding:4px 8px;border-radius:6px;pointer-events:none}
+.maxBtn{margin-left:auto;font-size:12px;padding:3px 8px}
+#app.full-code,#app.full-view{grid-template-columns:1fr}
+#app.full-code #view,#app.full-view #left,#app.full-code #split,#app.full-view #split{display:none}
+#viewTools{position:absolute;right:12px;top:12px;width:310px;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.seg{display:flex}.seg button{border-radius:0;font-size:13px;white-space:nowrap}.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}
+.seg button.on{background:var(--accent);border-color:var(--accent);color:#111;font-weight:600}
+#basePanel{width:100%;margin:0;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.bgrid{display:grid;grid-template-columns:14px 1fr 72px;gap:4px 8px;align-items:center;margin-top:8px;font:12px Consolas,monospace}
+.bgrid input[type=number]{padding:2px 6px;width:72px}.bgrid input[type=range]{width:100%;accent-color:var(--accent)}
+#basePanel .row{display:flex;gap:6px;margin-top:8px}#basePanel .row button{font-size:12px;padding:4px 8px}
+#paperBox{position:absolute;right:12px;bottom:12px;width:min(440px,45%);background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+#paperBox.big{left:12px;top:12px;width:auto !important}
+.paperHead{display:flex;align-items:center;gap:6px;padding:6px 8px 6px 22px;font-size:12px;color:var(--muted)}.paperHead span{flex:1}
+.paperHead button{padding:2px 8px;font-size:12px}
+#paperStage{position:relative;aspect-ratio:5/4}
+#paperBox.big #paperStage{height:calc(100% - 34px);aspect-ratio:auto}
+@media (max-width:900px){#app{grid-template-columns:1fr;grid-template-rows:auto 70vh;height:auto}#left{min-height:80vh}#split{display:none}}
+#paperStage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+</style>
+</head>
+<body>
+<div id="app">
+  <aside id="left">
+    <header><b>KRL simulator</b><span class="muted">KUKA · risanje s svinčnikom</span><button id="maxCode" class="maxBtn" title="Koda čez celo okno (Esc za nazaj)">⛶ Koda</button></header>
+    <div class="bar">
+      <select id="examples"></select>
+      <button id="btnOpen">Odpri…</button><input type="file" id="file" multiple accept=".src,.dat,.txt,.krl" hidden>
+      <button id="btnSave">Shrani .src</button>
+    </div>
+    <div id="editorWrap">
+      <div id="gutter">1</div>
+      <div id="hl" class="hl"></div><div id="errhl" class="hl"></div>
+      <textarea id="code" spellcheck="false" wrap="off"></textarea>
+    </div>
+    <div class="bar">
+      <button id="btnRun" class="primary" title="Ctrl+Enter">▶ Zaženi</button>
+      <button id="btnStep" title="Izvede en gib">⏭ Korak</button>
+      <button id="btnPause">⏸ Pavza</button>
+      <button id="btnReset">⏹ Ponastavi</button>
+    </div>
+    <div class="bar"><label>Hitrost <input type="range" id="speed" min="10" max="500" step="10" value="100"></label><span id="speedVal">100 %</span></div>
+    <div id="log"></div>
+    <details id="settings"><summary>Nastavitve</summary>
+      <div class="set">
+        <label for="sTool">Dolžina orodja (mm)</label><input id="sTool" type="number" min="100" max="400">
+        <label for="sPress">Hod vzmeti (mm)</label><input id="sPress" type="number" min="0.5" max="20" step="0.5">
+        <label for="sSpring">Vzmet (N/mm)</label><input id="sSpring" type="number" min="0.05" max="100" step="0.05">
+        <label for="sPreload">Prednapetost (N)</label><input id="sPreload" type="number" min="0" max="20" step="0.1">
+        <label for="sBreak">Zlom – osna sila (N)</label><input id="sBreak" type="number" min="0.5" max="100" step="0.5">
+        <label for="sBend">Zlom – bočna sila (N)</label><input id="sBend" type="number" min="0.1" max="50" step="0.1">
+        <label for="sVcp" title="Pravi robot v načinu T1: največ 250 mm/s">Hitrost LIN/CIRC (mm/s)</label><input id="sVcp" type="number" min="5" max="2000">
+        <label for="sPath">Pokaži načrtovano pot</label><input id="sPath" type="checkbox" style="width:auto">
+      </div>
+    </details>
+  </aside>
+  <div id="split" title="Povleci za spremembo širine · dvoklik: privzeto"></div>
+  <main id="view">
+    <div id="three"></div>
+    <div id="status"></div>
+    <div id="banner"></div>
+    <div id="hint">Preslednica: zaženi / pavza · Puščice: premik kamere · Shift + ↑↓: gor / dol · miška: vrtenje, kolesce: zoom</div>
+    <div id="viewTools">
+      <div class="seg"><button id="camTop">🔒 Ptičja perspektiva</button><button id="camFree" class="on">🎥 Prosta kamera</button><button id="maxView" title="Robot čez celo okno (Esc za nazaj)">⛶ Robot</button></div>
+      <details id="basePanel" open><summary>Base robota = deska (BASE_DATA[1])</summary>
+        <div class="bgrid" id="bgrid"></div>
+        <div class="row"><button id="baseSet" class="primary" title="Nastavi base robota na lego deske in ponastavi program">Set base</button><button id="baseDef">Privzeto</button></div>
+        <div class="muted" style="margin-top:6px">Program brez $BASE riše na desko. Odmik: <code>$BASE = BASE_DATA[1] : {x -110, y 15}</code></div>
+      </details>
+    </div>
+    <div id="paperBox">
+      <div class="grip" id="paperGrip" title="Povleci za spremembo velikosti"></div>
+      <div class="paperHead"><span>Papir – pogled od zgoraj (mm, okvir papirja)</span><button id="btnClear">Počisti</button><button id="btnBig">⤢</button></div>
+      <div id="paperStage"><canvas id="paper"></canvas><canvas id="paperOv"></canvas></div>
+    </div>
+  </main>
+</div>
+<script>
+setTimeout(() => { if (!window.__ok) { const b = document.getElementById('banner'); b.textContent = 'three.js se ni naložil – potrebna je internetna povezava (cdn.jsdelivr.net).'; b.style.display = 'block'; } }, 5000);
+</script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+window.__ok = true;
+const $ = s => document.querySelector(s);
+const D2R = Math.PI / 180, R2D = 180 / Math.PI;
+
+// ================= nastavitve =================
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+// press = hod vzmeti (mm), spring = vzmet (N/mm), preload = prednapetost (N), breakF / bendF = zlom konice osno / bočno (N)
+// vir: reports/KUKA risanje in sila svinčnika.md – pisanje ~1 N, vzmet 0.1–0.5 N/mm, lesen svinčnik se bočno zlomi pri ~5–15 N
+const DEF_SET = { tool: 200, press: 5, spring: 0.3, preload: 0.5, breakF: 8, bendF: 5, vcp: 100, paper: '{x 519.18, y -39.69, z 49.55, a 90, b 0, c 2.05}', showPath: true };
+const SET = { ...DEF_SET, ...store.get('krl.set', {}) };
+
+// ponytail: mere robota so ocenjene s fotografije (star mali KUKA), ne iz podatkovnega lista – popravi tu, ko poznaš točen tip s ploščice
+const ROB = { d1: 350, a1: 100, a2: 300, d4: 320, d6: 75 };
+const LIM = [[-170, 170], [-190, 45], [-120, 156], [-185, 185], [-120, 120], [-350, 350]];
+const HOME = [0, -90, 90, 0, 90, 0];           // svinčnik gleda navzdol
+const VPTP = 90;                                // °/s najhitrejše osi pri PTP (100 %)
+const HOLDER_GAP = 50; // mm od konice svinčnika do držala (glej buildTool)
+const MU = 0.3;        // ponytail: trenje grafit–papir ocenjeno; vpliva le na bočno silo med drsenjem
+// sila svinčnika na papir (N) pri vdoru d (mm): prednapetost + vzmet; čez hod vzmeti je tog
+function penForce(d) {
+  if (d <= 0) return 0;
+  return SET.preload + SET.spring * Math.min(d, SET.press) + (d > SET.press ? 1000 * (d - SET.press) : 0);
+}
+const PX0 = -300, PX1 = 200, PY0 = -200, PY1 = 200, SCALE = 2; // papir v mm (okvir papirja), px/mm
+
+// ================= matematika =================
+const Rx = t => new THREE.Matrix4().makeRotationX(t);
+const Ry = t => new THREE.Matrix4().makeRotationY(t);
+const Rz = t => new THREE.Matrix4().makeRotationZ(t);
+const Tr = (x, y, z) => new THREE.Matrix4().makeTranslation(x, y, z);
+const el = (m, r, c) => m.elements[c * 4 + r];
+const pos = m => new THREE.Vector3().setFromMatrixPosition(m);
+const quat = m => new THREE.Quaternion().setFromRotationMatrix(m);
+const compose = (p, q) => new THREE.Matrix4().compose(p, q, new THREE.Vector3(1, 1, 1));
+const ease = s => s * s * (3 - 2 * s);
+const wrapNear = (v, ref) => { while (v - ref > 180) v -= 360; while (v - ref < -180) v += 360; return v; };
+
+// KUKA okvir {X,Y,Z,A,B,C}: R = Rz(A)·Ry(B)·Rx(C)
+function frame(f) {
+  const m = Rz(f.a * D2R).multiply(Ry(f.b * D2R)).multiply(Rx(f.c * D2R));
+  return m.setPosition(f.x, f.y, f.z);
+}
+function toFrame(m) {
+  return {
+    x: el(m, 0, 3), y: el(m, 1, 3), z: el(m, 2, 3),
+    a: Math.atan2(el(m, 1, 0), el(m, 0, 0)) * R2D,
+    b: Math.atan2(-el(m, 2, 0), Math.hypot(el(m, 0, 0), el(m, 1, 0))) * R2D,
+    c: Math.atan2(el(m, 2, 1), el(m, 2, 2)) * R2D,
+  };
+}
+const aggToFrame = o => ({ x: o.X || 0, y: o.Y || 0, z: o.Z || 0, a: o.A || 0, b: o.B || 0, c: o.C || 0 });
+
+// direktna kinematika: osi (°) -> lega TCP (svet, mm)
+function fk(q, tool) {
+  const [a1, a2, a3, a4, a5, a6] = q.map(v => v * D2R);
+  return Rz(-a1).multiply(Tr(ROB.a1, 0, ROB.d1)).multiply(Ry(a2)).multiply(Tr(ROB.a2, 0, 0)).multiply(Ry(a3))
+    .multiply(Rx(-a4)).multiply(Tr(ROB.d4, 0, 0)).multiply(Ry(a5)).multiply(Rx(-a6)).multiply(Tr(ROB.d6, 0, 0)).multiply(tool);
+}
+
+// inverzna kinematika (komolec zgoraj, rešitev zapestja najbližja prejšnji legi)
+function ik(T, tool, prev) {
+  const F = T.clone().multiply(tool.clone().invert());
+  const W = pos(F).sub(new THREE.Vector3(el(F, 0, 0), el(F, 1, 0), el(F, 2, 0)).multiplyScalar(ROB.d6));
+  const rr = Math.hypot(W.x, W.y);
+  const phi = rr < 1e-6 ? -prev[0] * D2R : Math.atan2(W.y, W.x);
+  const r = rr - ROB.a1, h = W.z - ROB.d1, D = Math.hypot(r, h), { a2, d4 } = ROB;
+  if (D > a2 + d4 - 1e-6 || D < Math.abs(a2 - d4) + 1e-6) return { err: 'točka je izven dosega robota' };
+  const up = Math.atan2(h, r) + Math.acos((a2 * a2 + D * D - d4 * d4) / (2 * a2 * D));
+  const th2 = -up, th3 = -Math.atan2(h - a2 * Math.sin(up), r - a2 * Math.cos(up));
+  const M = Rz(phi).multiply(Ry(th3)).invert().multiply(F); // R36 = Rx(-A4)·Ry(A5)·Rx(-A6)
+  const b5 = Math.acos(Math.max(-1, Math.min(1, el(M, 0, 0))));
+  let sols;
+  if (Math.sin(b5) > 1e-4) {
+    const al = Math.atan2(el(M, 1, 0), -el(M, 2, 0)), ga = Math.atan2(el(M, 0, 1), el(M, 0, 2));
+    sols = [[-al, b5, -ga], [-(al + Math.PI), -b5, -(ga + Math.PI)]];
+  } else { // A5 ≈ 0: A4 in A6 sta na isti osi, A4 obdržimo
+    const al = -prev[3] * D2R, s = Math.atan2(el(M, 2, 1), el(M, 1, 1));
+    sols = [[-al, b5, -(s - al)]];
+  }
+  let best = null, cost = Infinity;
+  for (const s of sols) {
+    const w = [wrapNear(s[0] * R2D, prev[3]), s[1] * R2D, wrapNear(s[2] * R2D, prev[5])];
+    const c = Math.abs(w[0] - prev[3]) + Math.abs(w[1] - prev[4]) + Math.abs(w[2] - prev[5]);
+    if (c < cost) { cost = c; best = w; }
+  }
+  const q = [wrapNear(-phi * R2D, prev[0]), th2 * R2D, (th3 - th2) * R2D, ...best];
+  const bad = q.findIndex((v, i) => v < LIM[i][0] || v > LIM[i][1]);
+  if (bad >= 0) return { err: `os A${bad + 1} bi bila izven omejitve (${q[bad].toFixed(1)}°)` };
+  return { q };
+}
+
+// ================= KRL razčlenjevalnik =================
+const err = (ln, msg) => ({ ln, msg });
+// razdeli po vejicah, ki niso v oklepajih
+function splitTop(s) {
+  const out = [];
+  let d = 0, cur = '';
+  for (const ch of s) {
+    if (ch === '(') d++; else if (ch === ')') d--;
+    if (ch === ',' && !d) { out.push(cur); cur = ''; } else cur += ch;
+  }
+  out.push(cur);
+  return out;
+}
+// aritmetični/logični izraz KRL -> JS (samo dovoljeni žetoni, zato varno)
+const FN = { SIN: d => Math.sin(d * D2R), COS: d => Math.cos(d * D2R), TAN: d => Math.tan(d * D2R), SQRT: Math.sqrt, ABS: Math.abs,
+  ASIN: x => Math.asin(x) * R2D, ACOS: x => Math.acos(x) * R2D, ATAN2: (y, x) => Math.atan2(y, x) * R2D };
+const exprCache = new Map();
+function evalExpr(src, ln, get) {
+  let f = exprCache.get(src);
+  if (!f) {
+    const toks = src.match(/\d*\.?\d+(?:E[-+]?\d+)?|[A-Za-z_$][\w$]*(?:\.[A-Za-z_]\w*)?|==|<>|<=|>=|\S/gi) || [];
+    const js = toks.map(tk => {
+      const U = tk.toUpperCase();
+      if (/^[\d.]/.test(tk)) return tk;
+      if (U === 'AND') return '&&'; if (U === 'OR') return '||'; if (U === 'NOT') return '!'; if (U === 'EXOR') return '!==';
+      if (U === 'TRUE' || U === 'FALSE') return U.toLowerCase();
+      if (tk === '==') return '==='; if (tk === '<>') return '!==';
+      if (tk === '=') throw err(ln, 'za primerjavo uporabi == (npr. IF i == 2 THEN)');
+      if (/^([-+*/()<>,]|[<>]=)$/.test(tk)) return tk;
+      if (U in FN) return 'F.' + U;
+      if (/^[A-Za-z_$]/.test(tk)) return `v(${JSON.stringify(U)})`;
+      throw err(ln, `ne razumem "${tk}" v izrazu "${src.trim()}"`);
+    }).join(' ');
+    try { f = new Function('v', 'F', `return (${js});`); } catch { throw err(ln, `napačen izraz: "${src.trim()}"`); }
+    exprCache.set(src, f);
+  }
+  return f(get, FN);
+}
+function parseAgg(s, ln, ev) { // ev: računanje izrazov (npr. {x i*10}); brez njega so dovoljene le številke
+  s = s.trim();
+  if (!s.startsWith('{') || !s.endsWith('}')) throw err(ln, `pričakujem {…}, dobil "${s}"`);
+  const o = {};
+  for (const part of splitTop(s.slice(1, -1).replace(/^\s*\w+\s*:/, ''))) {
+    if (!part.trim()) continue;
+    const m = part.trim().match(/^([A-Za-z]\w*)\s+(.+)$/);
+    if (!m) throw err(ln, `ne razumem "${part.trim()}" – pravilno je npr. "x 30"`);
+    const txt = m[2].trim();
+    const v = /^[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?$/.test(txt) ? parseFloat(txt) : ev ? ev(txt, ln) : NaN;
+    if (typeof v !== 'number' || !isFinite(v)) throw err(ln, `vrednost "${txt}" ni število`);
+    o[m[1].toUpperCase()] = v;
+  }
+  return o;
+}
+
+function parseProgram(text) {
+  const routines = {}, vars = {}, main = [];
+  let cur = null, inDat = false;
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const ln = i + 1, t = raw.replace(/;.*/, '').trim(), U = t.toUpperCase();
+    let m;
+    if (!t || t.startsWith('&')) return;
+    if (/^DEFDAT\b/.test(U)) { inDat = true; return; }
+    if (/^ENDDAT\b/.test(U)) { inDat = false; return; }
+    const isDecl = /^(DECL|GLOBAL\s+DECL|INT|REAL|BOOL|E6POS|POS|FRAME|E6AXIS|AXIS)\s/.test(U);
+    if (isDecl && cur && cur.seenStmt) throw err(ln, 'DECL mora biti pred prvim ukazom v podprogramu (tako zahteva KUKA)');
+    if ((m = t.match(/^(?:DECL\s+)?(?:GLOBAL\s+)?(?:DECL\s+)?(E6POS|POS|FRAME|E6AXIS|AXIS)\s+(\w+)\s*=\s*(\{.*\})$/i))) { vars[m[2].toUpperCase()] = parseAgg(m[3], ln); return; }
+    if ((m = t.match(/^(?:DECL\s+)?(?:GLOBAL\s+)?(?:DECL\s+)?(INT|REAL|BOOL)\s+(.+)$/i))) {
+      if (!inDat) { (cur || main).push({ ln, t, U, decl: m[2] }); return; }
+      for (const d of splitTop(m[2])) {
+        const k = d.indexOf('=');
+        if (k >= 0) vars[d.slice(0, k).trim().toUpperCase()] = evalExpr(d.slice(k + 1), ln, () => { throw err(ln, 'v .dat je dovoljena le številka'); });
+      }
+      return;
+    }
+    if (/^(DECL|EXT|EXTFCT|GLOBAL\s+DECL|SIGNAL|CHAR|E6POS|POS|FRAME|E6AXIS|AXIS)\b/.test(U)) return;
+    if ((m = U.match(/^(?:GLOBAL\s+)?DEF\s+(\w+)\s*\((.*)\)/))) {
+      if (cur) throw err(ln, `manjka END pred DEF ${m[1]}`);
+      cur = routines[m[1]] = []; cur.ln = ln;
+      const ps = m[2].split(',').filter(p => p.trim());
+      cur.params = ps.map(p => p.split(':')[0].trim());
+      cur.modes = ps.map(p => (/:\s*IN\s*$/.test(p) ? 'IN' : 'OUT')); // KUKA: brez :IN je parameter :OUT (po referenci)
+      return;
+    }
+    if (/^END\b/.test(U)) { if (!cur) throw err(ln, 'END brez DEF'); cur = null; return; }
+    if (inDat) return;
+    if (cur) cur.seenStmt = true;
+    (cur || main).push({ ln, t, U });
+  });
+  if (cur) throw err(cur.ln, 'manjka END na koncu podprograma');
+  for (const [k, r] of Object.entries(routines)) routines[k] = Object.assign(tree(r), { ln: r.ln, params: r.params, modes: r.modes });
+  const first = Object.keys(routines)[0];
+  return { routines, vars, main: main.length > 0, entry: main.length ? tree(main) : first ? routines[first] : [] };
+}
+
+// vrstice -> drevo blokov (FOR/WHILE imajo .body, IF ima .then/.else)
+function tree(list) {
+  let i = 0;
+  const word = s => (s.U.match(/^\w+/) || [''])[0];
+  const expect = (w, s) => { if (!list[i] || word(list[i]) !== w) throw err(s.ln, `manjka ${w} za ${word(s)} v vrstici ${s.ln}`); i++; };
+  function block(enders) {
+    const out = [];
+    while (i < list.length) {
+      const s = list[i], w = word(s);
+      if (enders.includes(w)) return out;
+      i++;
+      if (w === 'FOR') { s.body = block(['ENDFOR']); expect('ENDFOR', s); }
+      else if (w === 'WHILE') { s.body = block(['ENDWHILE']); expect('ENDWHILE', s); }
+      else if (w === 'IF') { s.then = block(['ELSE', 'ENDIF']); if (list[i] && word(list[i]) === 'ELSE') { i++; s.else = block(['ENDIF']); } expect('ENDIF', s); }
+      else if (['ENDFOR', 'ENDWHILE', 'ENDIF', 'ELSE'].includes(w)) throw err(s.ln, `${w} brez začetka (FOR / WHILE / IF)`);
+      out.push(s);
+    }
+    return out;
+  }
+  return block([]);
+}
+
+// ================= prevajanje: KRL -> časovni potek osi =================
+function compile(text) {
+  const out = { samples: [], segs: [], error: null, broken: null, notes: [], duration: 0 };
+  const robotBase = frame(aggToFrame(parseAgg(SET.paper, 0))); // BASE_DATA[1] = deska (nastavi se desno zgoraj)
+  const paperInv = robotBase.clone().invert();
+  const st = { q: HOME.slice(), base: robotBase.clone(), tool: Tr(SET.tool, 0, 0), vcp: SET.vcp, moved: false };
+
+  // okvir: {x …}, BASE_DATA[1], TOOL_DATA[1], $NULLFRAME, spremenljivka, sestavljeno z ":" (npr. BASE_DATA[1] : {x -110, y 15})
+  function frameExpr(src, ln) {
+    const parts = [];
+    let d = 0, cur = '';
+    for (const ch of src) { if (ch === '{') d++; else if (ch === '}') d--; if (ch === ':' && !d) { parts.push(cur); cur = ''; } else cur += ch; }
+    parts.push(cur);
+    return parts.reduce((M, p) => {
+      const v = p.trim(), U = v.toUpperCase();
+      let F, mm;
+      if (v.startsWith('{')) F = frame(aggToFrame(parseAgg(v, ln, ev)));
+      else if ((mm = U.match(/^BASE_DATA\[\s*(\d+)\s*\]$/))) { if (mm[1] !== '1') throw err(ln, 'simulator pozna le BASE_DATA[1] (deska)'); F = robotBase.clone(); }
+      else if (/^TOOL_DATA\[\s*\d+\s*\]$/.test(U)) F = Tr(SET.tool, 0, 0);
+      else if (['$WORLD', '$NULLFRAME', '$ROBROOT'].includes(U)) F = new THREE.Matrix4();
+      else {
+        const h = holder(U);
+        if (!h || typeof h[U] !== 'object') throw err(ln, `ne poznam okvirja "${v}" – uporabi {x …}, BASE_DATA[1] ali $NULLFRAME`);
+        F = frame(aggToFrame(h[U]));
+      }
+      return M ? M.multiply(F) : F;
+    }, null);
+  }
+  const S = out.samples, noted = new Set();
+  const note = (ln, key, msg) => { if (!noted.has(key)) { noted.add(key); out.notes.push({ ln, msg }); } };
+  let t = 0, P, scope, ops = 0; // scope = lokalne spremenljivke trenutnega podprograma
+
+  const holder = b => (b in scope ? scope : b in P.vars ? P.vars : null);
+  const getVar = ln => name => {
+    const [b, mem] = name.split('.'), h = holder(b);
+    if (!h) throw err(ln, `spremenljivka ${b} ni deklarirana (manjka npr. DECL INT ${b})`);
+    let v = h[b];
+    if (mem !== undefined) v = v && typeof v === 'object' ? v[mem] : undefined;
+    if (v === undefined) throw err(ln, `${name} še nima vrednosti`);
+    return v;
+  };
+  const ev = (src, ln) => evalExpr(src, ln, getVar(ln));
+  const num = (src, ln) => { const v = ev(src, ln); if (typeof v !== 'number' || !isFinite(v)) throw err(ln, `"${src.trim()}" ni število`); return v; };
+  const cond = (src, ln) => { const v = ev(src, ln); if (typeof v !== 'boolean') throw err(ln, `pogoj "${src.trim()}" mora biti TRUE ali FALSE (npr. i == 2)`); return v; };
+  const setVar = (name, v, ln) => { const h = holder(name); if (!h) throw err(ln, `spremenljivka ${name} ni deklarirana (manjka DECL)`); h[name] = v; };
+
+  const mkSample = (q, time, seg) => {
+    const T = fk(q, st.tool), p = pos(T), lp = p.clone().applyMatrix4(paperInv);
+    const ax = new THREE.Vector3(el(T, 0, 0), el(T, 1, 0), el(T, 2, 0)).transformDirection(paperInv); // os svinčnika v okvirju papirja
+    return { t: time, q, p, x: lp.x, y: lp.y, d: -lp.z, tilt: Math.acos(Math.min(1, Math.abs(ax.z))), seg, F: 0, ink: false };
+  };
+  // stik s papirjem: sila, risanje, zlom svinčnika, trk držala
+  function contact(s, prev, ln) {
+    if (s.d > HOLDER_GAP) throw err(ln, `TRK: držalo svinčnika je zadelo desko (${s.d.toFixed(0)} mm pod papirjem) – robot se ustavi`);
+    if (out.broken || s.d < -0.01) return;
+    s.F = penForce(s.d);
+    const moving = Math.hypot(s.x - prev.x, s.y - prev.y) > 1e-6;
+    const lat = s.F * (Math.sin(s.tilt) + (moving ? MU : 0));
+    const why = s.d > SET.press ? `vzmet je stisnjena do konca (hod ${SET.press} mm, z bi moral biti nad -${SET.press})`
+      : s.F > SET.breakF ? `sila ${s.F.toFixed(1)} N je večja od ${SET.breakF} N`
+      : lat > SET.bendF ? `bočna sila ${lat.toFixed(1)} N je večja od ${SET.bendF} N (naklon svinčnika ${(s.tilt * R2D).toFixed(0)}°)` : '';
+    if (why) { out.broken = { ln, t: s.t, x: s.x, y: s.y, msg: `svinčnik se zlomi – ${why}` }; s.F = 0; return; }
+    s.ink = true;
+  }
+  S.push(mkSample(HOME.slice(), 0, -1));
+
+  function addSeg(ln, type, qs, dur) { // qs[0] = trenutna lega
+    if (qs.length < 2) return;
+    const seg = { ln, type, t0: t, t1: t + dur, baseM: st.base.clone(), baseInv: st.base.clone().invert(), base: pos(st.base).applyMatrix4(paperInv) };
+    const si = out.segs.push(seg) - 1, n = qs.length;
+    for (let k = 1; k < n; k++) {
+      const s = mkSample(qs[k], t + dur * k / (n - 1), si);
+      S.push(s);
+      try { contact(s, S[S.length - 2], ln); } catch (e) { seg.t1 = t = s.t; throw e; }
+    }
+    t += dur; st.q = qs[n - 1];
+  }
+
+  function target(c) { // delni zapis: manjkajoče vrednosti vzame iz trenutne lege v trenutnem $BASE
+    const cur = st.base.clone().invert().multiply(fk(st.q, st.tool)), f = toFrame(cur);
+    let local;
+    if ('A' in c || 'B' in c || 'C' in c) local = frame({ x: c.X ?? f.x, y: c.Y ?? f.y, z: c.Z ?? f.z, a: c.A ?? f.a, b: c.B ?? f.b, c: c.C ?? f.c });
+    else local = cur.setPosition(c.X ?? f.x, c.Y ?? f.y, c.Z ?? f.z);
+    return st.base.clone().multiply(local);
+  }
+
+  function path(ln, type, n, poseAt, dur) {
+    const qs = [st.q];
+    let fail = null;
+    for (let k = 1; k < n; k++) {
+      const prev = qs[qs.length - 1], r = ik(poseAt(ease(k / (n - 1))), st.tool, prev);
+      if (r.err) { fail = r.err; break; }
+      const j = r.q.findIndex((v, i) => Math.abs(v - prev[i]) > 5);
+      if (j >= 0) { fail = `singularnost – os A${j + 1} bi morala skočiti (${prev[j].toFixed(0)}° → ${r.q[j].toFixed(0)}°)`; break; }
+      qs.push(r.q);
+    }
+    addSeg(ln, type, qs, dur * (qs.length - 1) / (n - 1));
+    if (fail) throw err(ln, `${type}: ${fail}`);
+  }
+
+  function doPTP(ln, tg) {
+    let q1;
+    if (tg.axis) {
+      q1 = st.q.map((v, i) => tg.axis['A' + (i + 1)] ?? v);
+      const bad = q1.findIndex((v, i) => v < LIM[i][0] || v > LIM[i][1]);
+      if (bad >= 0) throw err(ln, `PTP: os A${bad + 1} izven omejitve (${q1[bad]}°)`);
+    } else {
+      const r = ik(target(tg.cart), st.tool, st.q);
+      if (r.err) throw err(ln, 'PTP: ' + r.err);
+      q1 = r.q;
+    }
+    const q0 = st.q, dq = Math.max(...q1.map((v, i) => Math.abs(v - q0[i])));
+    const n = Math.max(2, Math.ceil(dq / 0.5) + 1), qs = [];
+    for (let k = 0; k < n; k++) { const s = ease(k / (n - 1)); qs.push(q0.map((v, i) => v + (q1[i] - v) * s)); }
+    addSeg(ln, 'PTP', qs, Math.max(0.1, dq / VPTP));
+  }
+
+  function doLIN(ln, c) {
+    const T0 = fk(st.q, st.tool), T1 = target(c);
+    const p0 = pos(T0), p1 = pos(T1), r0 = quat(T0), r1 = quat(T1);
+    const L = p0.distanceTo(p1), ang = r0.angleTo(r1) * R2D;
+    const n = Math.max(2, Math.ceil(Math.max(L, ang * 2)) + 1);
+    path(ln, 'LIN', n, s => compose(p0.clone().lerp(p1, s), r0.clone().slerp(r1, s)), Math.max(0.05, L / st.vcp, ang / VPTP));
+  }
+
+  function doCIRC(ln, cAux, cEnd, ca) { // ca = CA kot v stopinjah (neobvezno)
+    const T0 = fk(st.q, st.tool), Ta = target(cAux), Te = target(cEnd);
+    const P0 = pos(T0), P1 = pos(Ta), P2 = pos(Te), r0 = quat(T0), r1 = quat(Te);
+    const u = P1.clone().sub(P0), v = P2.clone().sub(P0), w = u.clone().cross(v), w2 = w.lengthSq();
+    if (w2 < 1e-3) throw err(ln, 'CIRC: začetna, pomožna in končna točka ležijo na premici – ni krožnice');
+    const C = P0.clone().add(v.clone().multiplyScalar(u.lengthSq()).sub(u.clone().multiplyScalar(v.lengthSq())).cross(w).multiplyScalar(1 / (2 * w2)));
+    const R = P0.distanceTo(C), e1 = P0.clone().sub(C).normalize(), e2 = w.clone().normalize().cross(e1);
+    const d2 = P2.clone().sub(C);
+    let sweep = Math.atan2(d2.dot(e2), d2.dot(e1)); if (sweep <= 0) sweep += 2 * Math.PI;
+    if (ca !== undefined) sweep = ca * D2R; // CA: kot loka od začetka (+ smer skozi pomožno točko, − nasprotno)
+    const L = R * Math.abs(sweep), n = Math.max(3, Math.ceil(L) + 1);
+    path(ln, 'CIRC', n, s => compose(
+      C.clone().addScaledVector(e1, R * Math.cos(s * sweep)).addScaledVector(e2, R * Math.sin(s * sweep)),
+      r0.clone().slerp(r1, s)), Math.max(0.05, L / st.vcp));
+  }
+
+  function targets(str, ln) {
+    str = str.replace(/\b(C_PTP|C_DIS|C_VEL|C_ORI|C_SPL)\b/gi, '').replace(/\bCA\s+[-\d.]+/i, '');
+    if (/\{[^}]*$/.test(str)) throw err(ln, 'manjka zaključni }');
+    const rest = str.replace(/\{[^}]*\}|[A-Za-z_$]\w*/g, '').replace(/[\s,]/g, '');
+    if (rest) throw err(ln, `ne razumem "${rest}" – manjka { ali }?`);
+    return (str.match(/\{[^}]*\}|[A-Za-z_$]\w*/g) || []).map(tk => {
+      let o;
+      if (tk[0] === '{') o = parseAgg(tk, ln, ev);
+      else {
+        const name = tk.toUpperCase(), h = holder(name);
+        o = (h && typeof h[name] === 'object' ? h[name] : null) ?? (name === 'HOME' || name === 'XHOME' ? Object.fromEntries(HOME.map((v, i) => ['A' + (i + 1), v])) : null);
+        if (!o) throw err(ln, `neznana točka "${tk}" (ni v DECL / .dat)`);
+      }
+      return Object.keys(o).some(k => /^A[1-6]$/.test(k)) ? { axis: o } : { cart: o };
+    });
+  }
+
+  function exec(s, depth) {
+    const { ln, t, U } = s;
+    let m;
+    const tick = () => { if (++ops > 200000) throw err(ln, 'preveč korakov – je zanka neskončna?'); };
+    tick();
+    if (s.decl !== undefined) { // DECL INT i, n = 5
+      for (const d of splitTop(s.decl)) {
+        const k = d.indexOf('='), name = (k < 0 ? d : d.slice(0, k)).trim().toUpperCase();
+        if (!/^\w+$/.test(name)) throw err(ln, `napačno ime spremenljivke "${name}"`);
+        if (k >= 0) scope[name] = ev(d.slice(k + 1), ln); else if (!(name in scope)) scope[name] = undefined;
+      }
+      return;
+    }
+    if (s.body && /^FOR\b/.test(U)) {
+      m = t.match(/^FOR\s+(\w+)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$/i);
+      if (!m) throw err(ln, 'pravilno je: FOR i = 1 TO 5   (ali FOR i = 1 TO 9 STEP 2)');
+      const name = m[1].toUpperCase(), end = num(m[3], ln), stp = m[4] ? num(m[4], ln) : 1;
+      if (!stp) throw err(ln, 'STEP ne sme biti 0');
+      let i = num(m[2], ln);
+      for (; stp > 0 ? i <= end : i >= end; i += stp) { tick(); setVar(name, i, ln); for (const x of s.body) exec(x, depth); }
+      setVar(name, i, ln);
+      return;
+    }
+    if (s.body && /^WHILE\b/.test(U)) {
+      const c = t.replace(/^WHILE\s+/i, '');
+      while (cond(c, ln)) { tick(); for (const x of s.body) exec(x, depth); }
+      return;
+    }
+    if (s.then) {
+      m = t.match(/^IF\s+(.+?)\s+THEN$/i);
+      if (!m) throw err(ln, 'pravilno je: IF pogoj THEN');
+      for (const x of cond(m[1], ln) ? s.then : s.else || []) exec(x, depth);
+      return;
+    }
+    if ((m = U.match(/^(S?PTP|S?LIN|S?CIRC)\b/))) {
+      const kind = m[1].replace(/^S/, ''), tg = targets(t.slice(m[1].length), ln);
+      if (!st.moved && kind !== 'PTP') throw err(ln, 'prvi gib v programu mora biti PTP (KUKA zahteva BCO premik)');
+      if (!st.moved && tg[0] && tg[0].cart && !['X', 'Y', 'Z', 'A', 'B', 'C'].every(k => k in tg[0].cart))
+        note(ln, 'BCO', 'prvi PTP na pravem robotu mora biti popoln (vse osi ali X,Y,Z,A,B,C, npr. PTP HOME)');
+      const apo = U.match(/\bC_(DIS|PTP|VEL|ORI)\b/);
+      if (apo) note(ln, apo[0], `${apo[0]}: na pravem robotu bo vogal zaobljen (začne ~3 mm pred točko), simulator gre točno v točko`);
+      st.moved = true;
+      if (kind === 'CIRC') {
+        if (tg.length !== 2) throw err(ln, 'CIRC potrebuje 2 točki: {pomožna} {končna}');
+        if (tg[0].axis || tg[1].axis) throw err(ln, 'CIRC ne sprejme osnih koordinat (A1..A6)');
+        const ca = t.match(/\bCA\s+([-+]?\d*\.?\d+)/i);
+        return doCIRC(ln, tg[0].cart, tg[1].cart, ca ? parseFloat(ca[1]) : undefined);
+      }
+      if (tg.length !== 1) throw err(ln, `${kind} potrebuje točno 1 točko`);
+      if (kind === 'LIN' && tg[0].axis) throw err(ln, 'LIN ne sprejme osnih koordinat (A1..A6) – uporabi PTP');
+      return kind === 'PTP' ? doPTP(ln, tg[0]) : doLIN(ln, tg[0].cart);
+    }
+    if ((m = t.match(/^\$(BASE|TOOL)\s*=\s*(.+)$/i))) {
+      const M = frameExpr(m[2], ln);
+      if (m[1].toUpperCase() === 'BASE') st.base = M; else st.tool = M;
+      return;
+    }
+    if ((m = t.match(/^\$VEL\.CP\s*=\s*(.+)$/i))) { st.vcp = num(m[1], ln) * 1000; return; }
+    if ((m = t.match(/^WAIT\s+SEC\s+(.+)$/i))) { addSeg(ln, 'WAIT', [st.q, st.q], Math.max(0, num(m[1], ln))); return; }
+    if (/^(LOOP|REPEAT|SWITCH|EXIT)\b/.test(U)) throw err(ln, `${U.split(/\W/)[0]} v tej verziji še ni podprt (uporabi FOR ali WHILE)`);
+    if (/^(INI|HALT|BAS\s*\(|PDAT_ACT|FDAT_ACT|LDAT_ACT|BAS_COMMAND)/.test(U)) return;
+    if (/^(\$|PULSE|TRIGGER|INTERRUPT|CONTINUE)/.test(U)) {
+      const k = U.match(/^\$?\w+/)[0];
+      if (!noted.has(k)) { noted.add(k); out.notes.push({ ln, msg: `"${k}" simulator še ne podpira – prezrto` }); }
+      return;
+    }
+    if ((m = t.match(/^(\w+)\s*\((.*)\)$/))) { // klic podprograma, npr. kvadrat(-200, 20)
+      const r = P.routines[m[1].toUpperCase()];
+      if (!r) throw err(ln, `podprogram ${m[1]}() ne obstaja`);
+      const raw = m[2].trim() ? splitTop(m[2]).map(a => a.trim()) : [];
+      if (raw.length !== r.params.length) throw err(ln, `${m[1]}() pričakuje ${r.params.length} parametrov, dobil ${raw.length}`);
+      if (depth > 20) throw err(ln, 'preveč gnezdenih klicev (ali se podprogram kliče sam?)');
+      raw.forEach((a, i) => { if (r.modes[i] === 'OUT' && !/^\w+$/.test(a)) throw err(ln, `parameter ${r.params[i]} je :OUT – podaj spremenljivko, ne "${a}" (ali v DEF napiši ${r.params[i]}:IN)`); });
+      const local = Object.fromEntries(r.params.map((p, i) => [p, ev(raw[i], ln)]));
+      const saved = scope;
+      scope = local;
+      try { for (const x of r) exec(x, depth + 1); } finally { scope = saved; }
+      r.params.forEach((p, i) => { if (r.modes[i] === 'OUT') setVar(raw[i].toUpperCase(), local[p], ln); }); // :OUT vrne vrednost
+      return;
+    }
+    if ((m = t.match(/^(\w+)(?:\.(\w+))?\s*=\s*(.+)$/))) { // i = i + 1, P1.X = 30, P1 = {x 10}
+      const k = m[1].toUpperCase(), v = m[3].trim();
+      if (m[2]) {
+        const h = holder(k);
+        if (!h || typeof h[k] !== 'object') throw err(ln, `${m[1]} ni točka (E6POS/POS/FRAME)`);
+        h[k][m[2].toUpperCase()] = num(v, ln);
+      } else if (v.startsWith('{')) {
+        const h = holder(k);
+        setVar(k, { ...(h && typeof h[k] === 'object' ? h[k] : {}), ...parseAgg(v, ln, ev) }, ln);
+      } else setVar(k, ev(v, ln), ln);
+      return;
+    }
+    throw err(ln, `neznan ukaz: "${t}"`);
+  }
+
+  try {
+    P = parseProgram(text);
+    scope = P.main ? P.vars : {}; // program brez DEF (kot v šoli) piše kar v globalne spremenljivke
+    for (const s of P.entry) exec(s, 0);
+  } catch (e) {
+    out.error = e && e.msg ? e : { ln: 0, msg: String(e) };
+  }
+  out.duration = S[S.length - 1].t;
+  return out;
+}
+
+// samotest: fk(ik(lega)) mora vrniti isto lego; primeri se morajo prevesti brez napak
+function selfTest() {
+  const tool = Tr(SET.tool, 0, 0), bad = [];
+  let tried = 0;
+  for (let k = 0; k < 300; k++) {
+    const q = HOME.map((v, i) => v + (Math.random() - 0.5) * (i < 3 ? 60 : 80));
+    const T = fk(q, tool), s = ik(T, tool, HOME);
+    if (s.err) continue;
+    tried++;
+    const T2 = fk(s.q, tool);
+    if (T.elements.some((v, i) => Math.abs(v - T2.elements[i]) > (i >= 12 ? 1e-6 : 1e-9))) { bad.push('IK ' + q.map(v => v.toFixed(1))); break; }
+  }
+  if (tried < 50) bad.push(`IK: premalo dosegljivih leg (${tried})`);
+  const userPaper = SET.paper; SET.paper = DEF_SET.paper; // primeri so pisani za privzeto desko
+  for (const [name, src] of Object.entries(EXAMPLES)) { const p = compile(src); if (p.error) bad.push(`${name}: vrstica ${p.error.ln}: ${p.error.msg}`); }
+  SET.paper = userPaper;
+  // FOR/IF/WHILE: 0.5 + 1 + 0.5 + 0.25*2 = 2.5 s
+  const lp = compile('DEF t()\nDECL INT i, n = 0\nFOR i = 1 TO 3\nIF i <> 2 THEN\nWAIT SEC 0.5\nELSE\nWAIT SEC 1\nENDIF\nENDFOR\nWHILE n < 2\nn = n + 1\nWAIT SEC 0.25\nENDWHILE\nEND');
+  if (lp.error || Math.abs(lp.duration - 2.5) > 1e-9) bad.push('FOR/IF/WHILE: ' + (lp.error ? lp.error.msg : 'trajanje ' + lp.duration));
+  // KRL pravila iz priročnika KUKA
+  const outP = compile('DEF t()\nDECL REAL r\nr = 1\nset5(r)\nWAIT SEC r\nEND\nDEF set5(v:OUT)\nDECL REAL v\nv = 5\nEND');
+  if (outP.error || Math.abs(outP.duration - 5) > 1e-9) bad.push('KRL: parameter :OUT mora vrniti vrednost klicatelju');
+  const defP = compile('DEF t()\nDECL REAL r\nr = 1\nset5(r)\nWAIT SEC r\nEND\nDEF set5(v)\nDECL REAL v\nv = 5\nEND');
+  if (defP.error || Math.abs(defP.duration - 5) > 1e-9) bad.push('KRL: parameter brez :IN je privzeto :OUT');
+  if (!compile('DEF t()\nDECL INT i\ni = 1\nDECL INT j\nEND').error) bad.push('KRL: DECL za ukazom mora biti napaka');
+  SET.paper = DEF_SET.paper;
+  const circ = compile(`$BASE=${DEF_SET.paper}\nPTP{x -100, y 0, z 10}\nPTP{z -2}\nCIRC{x -90, y 10},{x -80, y 0} CA 360\nPTP{z 10}`);
+  const circInk = circ.samples.reduce((s, b, i) => { const a = circ.samples[i - 1]; return a && a.ink && b.ink ? s + Math.hypot(b.x - a.x, b.y - a.y) : s; }, 0);
+  if (circ.error || Math.abs(circInk - 20 * Math.PI) > 1) bad.push(`KRL: CIRC … CA 360 mora narisati cel krog (${circInk.toFixed(1)} mm)`);
+  const apo = compile(`$BASE=${DEF_SET.paper}\nPTP{x -100, y 0, z 10}\nLIN{x -90} C_DIS\nLIN{x -80}`);
+  if (!apo.notes.some(n => /C_DIS/.test(n.msg))) bad.push('KRL: C_DIS mora opozoriti, da so vogali na robotu zaobljeni');
+  SET.paper = userPaper;
+  // base robota = deska: program brez $BASE riše na desko, tudi ko je premaknjena ali nagnjena
+  const inkX = p => { const xs = p.samples.filter(s => s.ink).map(s => s.x); return xs.length ? [Math.min(...xs), Math.max(...xs)] : null; };
+  const noBase = 'PTP{x -100, y 0, z 10}\nPTP{z -2}\nLIN{x -60}\nPTP{z 10}';
+  for (const paper of [DEF_SET.paper, '{x 480, y -20, z 80, a 90, b 20, c 0}']) {
+    SET.paper = paper;
+    const p = compile(noBase), r = inkX(p);
+    if (p.error || p.broken || !r || Math.abs(r[0] + 100) > 0.5 || Math.abs(r[1] + 60) > 0.5) bad.push(`base: brez $BASE mora risati na desko ${paper} (${r})`);
+  }
+  SET.paper = DEF_SET.paper;
+  const bd = compile('$BASE = BASE_DATA[1] : {x -110, y 15}\nPTP{x 0, y 0, z 10}');
+  if (bd.error || !bd.segs[0] || Math.abs(bd.segs[0].base.x + 110) > 1e-6 || Math.abs(bd.segs[0].base.y - 15) > 1e-6) bad.push('base: BASE_DATA[1] : {x -110, y 15} mora premakniti izhodišče na (-110, 15) deske');
+  SET.paper = userPaper;
+  // sila na svinčnik in zlom (privzeta deska)
+  SET.paper = DEF_SET.paper;
+  const press = z => compile(`$BASE=${DEF_SET.paper}\nPTP{x -100, y 0, z 10}\nPTP{z ${z}}\nLIN{x -60, y 0}\nPTP{z 10}`);
+  if (!(penForce(-1) === 0 && penForce(0.5) > 0 && penForce(1) < penForce(3))) bad.push('svinčnik: sila mora biti 0 v zraku in rasti s pritiskom');
+  const ok = press(-2);
+  if (ok.error || ok.broken || !ok.samples.some(s => s.ink)) bad.push('svinčnik: z -2 mora risati brez zloma');
+  const deep = press(-8);
+  if (!deep.broken || deep.error) bad.push('svinčnik: z -8 (čez hod vzmeti) ga mora zlomiti, robot pa nadaljuje');
+  else if (deep.samples.some(s => s.t > deep.broken.t && s.ink)) bad.push('svinčnik: po zlomu ne sme več risati');
+  const k0 = SET.spring; SET.spring = 50; const stiff = press(-3); SET.spring = k0;
+  if (!stiff || !stiff.broken) bad.push('svinčnik: pretrda vzmet (50 N/mm) pri z -3 ga mora zlomiti');
+  const crash = press(-80);
+  if (!crash.error) bad.push('svinčnik: z -80 mora ustaviti robota (trk držala v desko)');
+  SET.paper = userPaper;
+  return bad;
+}
+
+// ================= primeri =================
+const EXAMPLES = {
+  'Črka R 2× (podprogram)': `; Naloga 1 SK: dve črki R (obrnjeni za 180°)
+; višina 50, širina 30, razmak 10, P1 (-110, 15) na deski
+PTP HOME
+$BASE = BASE_DATA[1] : {x -110, y 15}   ; izhodišče = P1 prve črke
+crkaR()
+$BASE = BASE_DATA[1] : {x -70, y 15}    ; druga črka: 30 širina + 10 razmak
+crkaR()
+PTP HOME
+
+DEF crkaR()
+PTP{x 30, y 50, z 10}
+PTP{z -2}
+LIN{x 30, y 0}                     ; hrbet (navpična črta desno)
+LIN{x 12.5, y 0}                   ; spodnja črta
+CIRC{x 0, y 12.5}{x 12.5, y 25}    ; lok, polmer 12.5
+LIN{x 30, y 25}                    ; srednja črta nazaj do hrbta
+PTP{z 10}
+PTP{x 12.5, y 25}
+PTP{z -2}
+LIN{x 0, y 50}                     ; noga poševno gor levo
+PTP{z 10}
+END
+`,
+  'Lik 1 SK (LIN + CIRC)': `; base robota = deska (nastavi desno zgoraj)
+PTP HOME
+PTP{x -150, y 20, z 10}
+PTP{x -150, y 20, z -2}
+LIN{x -50, y 35}
+LIN{x -35, y 70}
+LIN{x -135, y 55}
+CIRC{x -140,y 41},{x -155, y 40}
+LIN{x -150 , y 20}
+PTP{z 10}
+`,
+  'FOR + IF: vrsta kvadratov': `; 5 kvadratov v vrsti, srednji je večji
+DEF kvadrati()
+  DECL INT i
+  DECL REAL s
+  PTP HOME
+  FOR i = 0 TO 4
+    IF i == 2 THEN
+      s = 30
+    ELSE
+      s = 20
+    ENDIF
+    kvadrat(i * 40 - 200, s)
+  ENDFOR
+  PTP HOME
+END
+
+DEF kvadrat(x0:IN, s:IN)
+  DECL REAL x0, s
+  PTP{x x0, y 0, z 10}
+  PTP{z -2}
+  LIN{x x0 + s, y 0}
+  LIN{x x0 + s, y s}
+  LIN{x x0, y s}
+  LIN{x x0, y 0}
+  PTP{z 10}
+END
+`,
+  'Prazen program': `DEF moj_program()
+; base robota = deska (BASE_DATA[1]), nastavi ga desno zgoraj
+PTP HOME
+
+END
+`,
+};
+
+// ================= 3D scena =================
+const host = $('#three');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+host.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b2028);
+const camera = new THREE.PerspectiveCamera(40, 1, 5, 20000);
+const zup = (x, y, z) => new THREE.Vector3(x, z, -y); // robot računa z navzgor, three.js y navzgor
+camera.position.copy(zup(1450, -1150, 950));
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(zup(430, -60, 150));
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a4250, 1.1));
+const sun = new THREE.DirectionalLight(0xffffff, 1.8);
+sun.position.copy(zup(500, -700, 1800)); sun.target.position.copy(zup(400, 0, 0));
+sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048); sun.shadow.bias = -0.0004;
+Object.assign(sun.shadow.camera, { left: -1000, right: 1000, top: 1000, bottom: -1000, near: 100, far: 5000 });
+sun.shadow.camera.updateProjectionMatrix();
+scene.add(sun, sun.target);
+const root = new THREE.Group(); root.rotation.x = -Math.PI / 2; scene.add(root);
+
+const mat = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: .55, ...o });
+const MT = { orange: mat(0xf26419, { metalness: .1 }), black: mat(0x1e1f22), metal: mat(0xb9c0c8, { roughness: .35, metalness: .6 }),
+  white: mat(0xe6e6e0, { roughness: .8 }), wood: mat(0xc08a55, { roughness: .8 }), pen: mat(0xf2c94c), graphite: mat(0x333333) };
+function mesh(geo, m, x = 0, y = 0, z = 0, axis) {
+  const o = new THREE.Mesh(geo, m);
+  o.position.set(x, y, z);
+  if (axis === 'x') o.rotation.z = -Math.PI / 2; else if (axis === 'z') o.rotation.x = Math.PI / 2;
+  o.castShadow = o.receiveShadow = true;
+  return o;
+}
+const box = (sx, sy, sz, m, x, y, z) => mesh(new THREE.BoxGeometry(sx, sy, sz), m, x, y, z);
+const cyl = (r, h, m, x, y, z, axis = 'z') => mesh(new THREE.CylinderGeometry(r, r, h, 40), m, x, y, z, axis);
+const cap = (r, len, m, x, y, z, axis = 'x') => mesh(new THREE.CapsuleGeometry(r, len, 8, 24), m, x, y, z, axis);
+
+// miza
+root.add(box(1100, 800, 20, MT.metal, 300, -60, -10), box(1080, 780, 680, MT.white, 300, -60, -360),
+  mesh(new THREE.PlaneGeometry(6000, 6000), mat(0x6b5a46, { roughness: .9 }), 0, 0, -700));
+
+// robot: J[0..5] = osi A1..A6, ista veriga kot fk()
+const J = Array.from({ length: 6 }, () => new THREE.Group());
+root.add(box(240, 220, 24, MT.orange, 0, 0, 12), cyl(92, 150, MT.black, 0, 0, 99), J[0]);
+J[0].add(cyl(98, 90, MT.orange, 0, 0, 219), cap(80, 90, MT.orange, 50, 0, 300, 'y'), cyl(82, 210, MT.orange, ROB.a1, 0, ROB.d1, 'y'), J[1]);
+J[1].position.set(ROB.a1, 0, ROB.d1);
+J[1].add(cap(55, ROB.a2, MT.orange, ROB.a2 / 2, 60, 0, 'x'), J[2]);
+J[2].position.set(ROB.a2, 0, 0);
+J[2].add(cyl(70, 180, MT.orange, 0, 15, 0, 'y'), cap(58, 160, MT.orange, 20, 0, 0, 'x'), J[3]);
+J[3].add(cyl(44, 170, MT.orange, 220, 0, 0, 'x'), J[4]);
+J[4].position.set(ROB.d4, 0, 0);
+J[4].add(cyl(46, 100, MT.orange, 0, 0, 0, 'y'), J[5]);
+J[5].add(cyl(34, 40, MT.orange, 35, 0, 0, 'x'), cyl(38, 20, MT.black, 65, 0, 0, 'x'));
+const toolG = new THREE.Group(), penG = new THREE.Group();
+toolG.position.x = ROB.d6; J[5].add(toolG);
+function buildTool() {
+  toolG.clear(); penG.clear();
+  const L = SET.tool;
+  toolG.add(box(40, 70, 70, MT.metal, 20, 0, 0), cyl(14, L - 90, MT.metal, 40 + (L - 90) / 2, 0, 0, 'x'), penG);
+  penTip = mesh(new THREE.ConeGeometry(4.5, 10, 24), MT.graphite, L - 5, 0, 0, 'x');
+  penG.add(cyl(4.5, 70, MT.pen, L - 45, 0, 0, 'x'), penTip);
+}
+let penTip = null;
+
+// animacija zloma: konica odleti, drobci grafita, rdeč obroč na papirju (teče v realnem času)
+const fx = [];
+let wasBroken = false;
+function breakFx() {
+  const tip = new THREE.Vector3(), q = new THREE.Quaternion();
+  penTip.getWorldPosition(tip); penTip.getWorldQuaternion(q);
+  const floor = tip.y - 2;
+  const add = (m, v, spin, life) => { m.position.copy(tip); scene.add(m); fx.push({ m, v, spin, life, t: 0, floor, s0: m.scale.x }); };
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const piece = new THREE.Group(); // odlomljena konica s koščkom lesa
+  piece.add(mesh(new THREE.ConeGeometry(4.5, 10, 16), MT.graphite), mesh(new THREE.CylinderGeometry(4.5, 4.5, 14, 16), MT.pen, 0, -12, 0));
+  piece.quaternion.copy(q); piece.scale.setScalar(2); // ponytail: 2× večja od prave, da je vidna od daleč
+  const dir = rnd(0, Math.PI * 2);
+  add(piece, new THREE.Vector3(Math.cos(dir) * 220, 380, Math.sin(dir) * 220), new THREE.Vector3(rnd(-14, 14), 0, rnd(-14, 14)), 3);
+  for (let i = 0; i < 16; i++) { // drobci
+    const a = rnd(0, Math.PI * 2), s = rnd(80, 300);
+    add(mesh(new THREE.BoxGeometry(4, 4, 4), i % 3 ? MT.graphite : MT.wood),
+      new THREE.Vector3(Math.cos(a) * s, rnd(150, 450), Math.sin(a) * s), new THREE.Vector3(rnd(-20, 20), 0, rnd(-20, 20)), rnd(0.8, 1.5));
+  }
+  const ring = new THREE.Mesh(new THREE.RingGeometry(4, 6, 32), new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, side: THREE.DoubleSide }));
+  ring.rotation.x = -Math.PI / 2; ring.position.copy(tip); ring.position.y = floor + 1; scene.add(ring);
+  fx.push({ m: ring, ring: true, life: 0.9, t: 0 });
+  window.__fx = fx.length; // za preizkus: koliko delcev je nastalo
+}
+function updateFx(dt) {
+  for (let i = fx.length - 1; i >= 0; i--) {
+    const f = fx[i];
+    f.t += dt;
+    if (f.ring) { f.m.scale.setScalar(1 + f.t * 14); f.m.material.opacity = Math.max(0, 1 - f.t / f.life); }
+    else {
+      f.v.y -= 2500 * dt; // ponytail: gravitacija ~4× upočasnjena, da se zlom lepo vidi
+      f.m.position.addScaledVector(f.v, dt);
+      if (f.m.position.y < f.floor) { f.m.position.y = f.floor; f.v.y *= -0.35; f.v.x *= 0.6; f.v.z *= 0.6; f.spin.multiplyScalar(0.5); }
+      f.m.rotation.x += f.spin.x * dt; f.m.rotation.z += f.spin.z * dt;
+      f.m.scale.setScalar(f.s0 * Math.max(0.001, Math.min(1, (f.life - f.t) / 0.4))); // na koncu se skrči
+    }
+    if (f.t >= f.life) { scene.remove(f.m); fx.splice(i, 1); }
+  }
+}
+function clearFx() { for (const f of fx) scene.remove(f.m); fx.length = 0; wasBroken = false; }
+function setRobot(q, d, broken = false) {
+  penTip.visible = !broken; // zlomljena konica
+  J[0].rotation.z = -q[0] * D2R; J[1].rotation.y = q[1] * D2R; J[2].rotation.y = q[2] * D2R;
+  J[3].rotation.x = -q[3] * D2R; J[4].rotation.y = q[4] * D2R; J[5].rotation.x = -q[5] * D2R;
+  penG.position.x = -Math.max(0, Math.min(SET.press, d)); // vzmet: svinčnik se potisne nazaj v držalo
+}
+
+// papir: platno je hkrati tekstura v 3D in 2D pogled
+const paperCv = $('#paper'), ov = $('#paperOv');
+paperCv.width = ov.width = (PX1 - PX0) * SCALE; paperCv.height = ov.height = (PY1 - PY0) * SCALE;
+const pctx = paperCv.getContext('2d'), octx = ov.getContext('2d');
+const paperTex = new THREE.CanvasTexture(paperCv); paperTex.colorSpace = THREE.SRGBColorSpace; paperTex.anisotropy = 8;
+const paperG = new THREE.Group(); paperG.matrixAutoUpdate = false; root.add(paperG);
+const woodBlock = box((PX1 - PX0) * .6, (PY1 - PY0) * .7, 38, MT.wood, (PX0 + PX1) / 2, (PY0 + PY1) / 2, -31);
+{
+  const W = PX1 - PX0, H = PY1 - PY0, xc = (PX0 + PX1) / 2, yc = (PY0 + PY1) / 2;
+  const axes = new THREE.AxesHelper(120); axes.position.z = 1; // osi papirja: X rdeča, Y zelena, Z modra
+  paperG.add(mesh(new THREE.PlaneGeometry(W, H), mat(0xffffff, { map: paperTex, roughness: .95 }), xc, yc, 0.2),
+    box(W + 40, H + 40, 12, MT.white, xc, yc, -6), woodBlock, axes);
+}
+const baseAxes = new THREE.AxesHelper(70); // trenutni $BASE iz programa
+baseAxes.matrixAutoUpdate = false; baseAxes.visible = false; root.add(baseAxes);
+let paperInv = new THREE.Matrix4(), robotOnPaper = new THREE.Vector3();
+function placePaper() {
+  const f = aggToFrame(parseAgg(SET.paper, 0)), M = frame(f);
+  paperG.matrix.copy(M); paperG.matrixWorldNeedsUpdate = true;
+  paperInv = M.clone().invert();
+  robotOnPaper = new THREE.Vector3().applyMatrix4(paperInv);
+  woodBlock.visible = Math.abs(f.b) < 5 && Math.abs(f.c) < 5; // ponytail: podstavek le za ravno desko, nagnjena "lebdi"
+  if (camMode === 'top') aimTop();
+}
+
+// kamera: prosta ali zaklenjena od zgoraj
+const HINT = $('#hint').textContent;
+let camMode = 'free', freeCam = null, topH = 1250; // topH = višina kamere nad mizo (mm)
+host.addEventListener('wheel', e => { // zoom v ptičji perspektivi (prosta kamera ima svojega)
+  if (camMode !== 'top') return;
+  e.preventDefault();
+  topH = Math.max(250, Math.min(4000, topH * Math.exp(e.deltaY * 0.001)));
+  aimTop();
+}, { passive: false });
+function aimTop() {
+  const M = paperG.matrix;
+  const c = new THREE.Vector3((PX0 + PX1) / 2, (PY0 + PY1) / 2, 0).applyMatrix4(M); // točno nad sredino papirja
+  const r = new THREE.Vector3(el(M, 0, 0), el(M, 1, 0), 0).normalize(); // X papirja kaže desno, kot v 2D pogledu
+  const u = new THREE.Vector3(0, 0, 1).cross(r);
+  camera.position.copy(zup(c.x, c.y, topH));
+  camera.up.copy(zup(u.x, u.y, u.z));
+  camera.lookAt(zup(c.x, c.y, 0));
+}
+function setCamMode(mode) {
+  if (mode === camMode) return;
+  if (mode === 'top') { freeCam = { p: camera.position.clone(), t: controls.target.clone() }; controls.enabled = false; camMode = mode; aimTop(); }
+  else { camMode = mode; camera.up.set(0, 1, 0); camera.position.copy(freeCam.p); controls.target.copy(freeCam.t); controls.enabled = true; controls.update(); }
+  $('#camTop').classList.toggle('on', mode === 'top'); $('#camFree').classList.toggle('on', mode === 'free');
+  $('#hint').textContent = mode === 'top' ? 'Preslednica: zaženi / pavza · Kolesce: zoom' : HINT;
+}
+// koda ali robot čez celo okno
+function setFull(which) { // 'code' | 'view' | null
+  const app = $('#app');
+  const next = which && !app.classList.contains('full-' + which) ? which : null;
+  app.classList.remove('full-code', 'full-view');
+  if (next) app.classList.add('full-' + next);
+  $('#maxCode').textContent = next === 'code' ? '⇲ Nazaj' : '⛶ Koda';
+  $('#maxView').textContent = next === 'view' ? '⇲ Nazaj' : '⛶ Robot';
+  syncEditor();
+}
+// spreminjanje velikosti oken z vlečenjem (shrani se)
+const LAYOUT = { left: 460, paper: 0, ...store.get('krl.layout', {}) };
+function dragHandle(el, onMove) {
+  el.addEventListener('pointerdown', e => {
+    e.preventDefault(); el.setPointerCapture(e.pointerId); el.classList.add('drag');
+    const x0 = e.clientX, start = { left: LAYOUT.left, paper: $('#paperBox').offsetWidth };
+    const mv = ev => onMove(ev.clientX - x0, start);
+    const up = () => { el.removeEventListener('pointermove', mv); el.removeEventListener('pointerup', up); el.classList.remove('drag'); store.set('krl.layout', LAYOUT); };
+    el.addEventListener('pointermove', mv); el.addEventListener('pointerup', up);
+  });
+}
+function setLeft(px) {
+  LAYOUT.left = Math.round(Math.max(260, Math.min(innerWidth - 300, px)));
+  $('#app').style.setProperty('--left', LAYOUT.left + 'px');
+}
+function setPaperW(px) {
+  if (!px) return;
+  const v = $('#view');
+  LAYOUT.paper = Math.round(Math.max(220, Math.min(v.clientWidth - 24, (v.clientHeight - 60) * 1.25, px)));
+  $('#paperBox').style.width = LAYOUT.paper + 'px';
+}
+dragHandle($('#split'), (dx, s) => setLeft(s.left + dx));
+dragHandle($('#paperGrip'), (dx, s) => setPaperW(s.paper - dx));
+$('#split').ondblclick = () => { setLeft(460); store.set('krl.layout', LAYOUT); };
+setLeft(LAYOUT.left);
+requestAnimationFrame(() => setPaperW(LAYOUT.paper));
+$('#maxCode').onclick = () => setFull('code');
+$('#maxView').onclick = () => setFull('view');
+addEventListener('keydown', e => { if (e.key === 'Escape') setFull(null); });
+$('#camTop').onclick = () => setCamMode('top');
+$('#camFree').onclick = () => setCamMode('free');
+const px = (x, y) => [(x - PX0) * SCALE, (PY1 - y) * SCALE];
+function clearPaper() {
+  const c = pctx, W = paperCv.width, H = paperCv.height;
+  c.fillStyle = '#fbfbf8'; c.fillRect(0, 0, W, H);
+  for (let v = Math.ceil(PX0 / 10) * 10; v <= PX1; v += 10) { const [X] = px(v, 0); gridLine(c, v, X, 0, X, H); }
+  for (let v = Math.ceil(PY0 / 10) * 10; v <= PY1; v += 10) { const [, Y] = px(0, v); gridLine(c, v, 0, Y, W, Y); }
+  paperTex.needsUpdate = true;
+}
+function gridLine(c, v, x0, y0, x1, y1) {
+  c.strokeStyle = v % 50 ? '#e4e9ef' : '#c9d2dd'; c.lineWidth = v % 50 ? 1 : 1.5;
+  c.beginPath(); c.moveTo(x0, y0); c.lineTo(x1, y1); c.stroke();
+}
+function strokeTo(i) {
+  const a = prog.samples[i - 1], b = prog.samples[i];
+  if (!a || !a.ink || !b.ink) return; // svinčnik v zraku ali zlomljen
+  const k = Math.min(1, (a.F + b.F) / 2 / 2); // ponytail: temnost nasiči pri ~2 N (ocena, ni izmerjene krivulje)
+  const g = Math.round(165 - 140 * k);
+  pctx.strokeStyle = `rgb(${g},${g},${g + 8})`; pctx.lineWidth = (0.4 + 0.8 * k) * SCALE; pctx.lineCap = 'round';
+  pctx.beginPath(); pctx.moveTo(...px(a.x, a.y)); pctx.lineTo(...px(b.x, b.y)); pctx.stroke();
+  paperTex.needsUpdate = true;
+}
+
+// načrtovana pot (3D črta + 2D obris)
+let pathLine = null, planInk = null, planAir = null;
+function buildPlan() {
+  if (pathLine) { root.remove(pathLine); pathLine.geometry.dispose(); }
+  const S = prog.samples, P = new Float32Array(S.length * 3), C = new Float32Array(S.length * 3);
+  const air = new THREE.Color(0x4aa3ff), ink = new THREE.Color(0x3ecf8e);
+  planInk = new Path2D(); planAir = new Path2D();
+  S.forEach((s, i) => {
+    P.set([s.p.x, s.p.y, s.p.z], i * 3); C.set((s.ink ? ink : air).toArray(), i * 3);
+    if (i) { const a = S[i - 1], path = a.ink && s.ink ? planInk : planAir; path.moveTo(...px(a.x, a.y)); path.lineTo(...px(s.x, s.y)); }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(P, 3)); g.setAttribute('color', new THREE.BufferAttribute(C, 3));
+  pathLine = new THREE.Line(g, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .75 }));
+  pathLine.visible = SET.showPath;
+  root.add(pathLine);
+}
+let cur = { x: 0, y: 0, d: -100, seg: null };
+function drawOverlay() {
+  const c = octx, W = ov.width, H = ov.height;
+  c.clearRect(0, 0, W, H);
+  if (SET.showPath && planAir) {
+    c.setLineDash([6, 6]); c.strokeStyle = 'rgba(74,163,255,.6)'; c.lineWidth = 1.5; c.stroke(planAir);
+    c.setLineDash([]); c.strokeStyle = 'rgba(62,207,142,.45)'; c.lineWidth = 4; c.stroke(planInk);
+  }
+  c.fillStyle = '#7d8896'; c.font = '15px system-ui';
+  for (let v = Math.ceil(PX0 / 50) * 50; v <= PX1; v += 50) c.fillText(v, px(v, 0)[0] + 3, H - 6);
+  for (let v = Math.ceil(PY0 / 50) * 50; v < PY1; v += 50) c.fillText(v, 4, px(0, v)[1] - 4);
+  arrow(c, 0, 0, 40, 0, '#e5484d', 'X'); arrow(c, 0, 0, 0, 40, '#30a46c', 'Y');
+  const rx = Math.max(PX0 + 20, Math.min(PX1 - 40, robotOnPaper.x)), ry = Math.max(PY0 + 10, Math.min(PY1 - 8, robotOnPaper.y));
+  c.fillStyle = '#ff6a13'; c.font = 'bold 16px system-ui'; c.fillText('ROBOT', px(rx, ry)[0] - 25, px(rx, ry)[1] + 14);
+  if (cur.seg) { // izhodišče trenutnega $BASE
+    const [bx, by] = px(cur.seg.base.x, cur.seg.base.y);
+    c.strokeStyle = '#ff6a13'; c.lineWidth = 2; c.beginPath(); c.moveTo(bx - 9, by); c.lineTo(bx + 9, by); c.moveTo(bx, by - 9); c.lineTo(bx, by + 9); c.stroke();
+    c.fillStyle = '#ff6a13'; c.font = '13px system-ui'; c.fillText('$BASE', bx + 6, by - 6);
+  }
+  const [X, Y] = px(cur.x, cur.y);
+  const touching = cur.d > -0.01 && !cur.broken;
+  c.strokeStyle = cur.broken ? '#ff5a5f' : touching ? '#1f9d55' : '#4aa3ff';
+  c.lineWidth = 2.5; c.beginPath(); c.arc(X, Y, touching ? 6 : 9, 0, Math.PI * 2); c.stroke();
+  if (prog && prog.broken && cur.broken) { // mesto zloma
+    const [bx, by] = px(prog.broken.x, prog.broken.y);
+    c.strokeStyle = '#ff5a5f'; c.lineWidth = 3; c.beginPath(); c.moveTo(bx - 8, by - 8); c.lineTo(bx + 8, by + 8); c.moveTo(bx + 8, by - 8); c.lineTo(bx - 8, by + 8); c.stroke();
+  }
+}
+function arrow(c, x0, y0, x1, y1, color, label) {
+  const [a, b] = px(x0, y0), [e, f] = px(x1, y1);
+  c.strokeStyle = c.fillStyle = color; c.lineWidth = 2.5;
+  c.beginPath(); c.moveTo(a, b); c.lineTo(e, f); c.stroke();
+  c.font = 'bold 15px system-ui'; c.fillText(label, e + 4, f - 4);
+}
+
+// ================= predvajanje =================
+let prog = null, compiledCode = null, speed = 100;
+const play = { t: 0, idx: 0, running: false, stopAt: Infinity };
+function ensureCompiled() {
+  if (prog && compiledCode === code.value) return;
+  compiledCode = code.value;
+  prog = compile(code.value);
+  buildPlan(); resetPlayback(); reportCompile();
+}
+function resetPlayback() {
+  Object.assign(play, { t: 0, idx: 0, running: false, stopAt: Infinity });
+  clearPaper(); clearFx(); $('#banner').style.display = 'none';
+}
+function stepTo(dt) {
+  if (!prog) return;
+  const S = prog.samples;
+  if (play.running) {
+    play.t = Math.min(play.t + dt * speed / 100, play.stopAt, prog.duration);
+    if (play.t >= play.stopAt || play.t >= prog.duration) { play.running = false; if (play.t >= prog.duration) onEnd(); }
+  }
+  while (play.idx < S.length - 1 && S[play.idx + 1].t <= play.t) { play.idx++; strokeTo(play.idx); }
+  const a = S[play.idx], b = S[Math.min(play.idx + 1, S.length - 1)];
+  const f = b.t > a.t ? (play.t - a.t) / (b.t - a.t) : 0;
+  const q = a.q.map((v, i) => v + (b.q[i] - v) * f);
+  const broken = !!prog.broken && play.t >= prog.broken.t;
+  cur = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, d: a.d + (b.d - a.d) * f, F: a.F + (b.F - a.F) * f, broken, seg: prog.segs[b.seg] || null, q };
+  setRobot(q, broken ? 0 : cur.d, broken);
+  setLine(play.t > 0 && cur.seg ? cur.seg.ln : 0);
+  const bn = $('#banner');
+  if (broken && bn.style.display !== 'block') { bn.textContent = `Vrstica ${prog.broken.ln}: ${prog.broken.msg}`; bn.style.display = 'block'; }
+  if (broken && !wasBroken) { wasBroken = true; breakFx(); }
+}
+function onEnd() {
+  if (prog.error) {
+    const b = $('#banner'); b.textContent = `Ustavljeno – vrstica ${prog.error.ln}: ${prog.error.msg}`; b.style.display = 'block';
+  } else log('Program končan.', 'ok');
+}
+
+// ================= vmesnik =================
+const code = $('#code'), gutter = $('#gutter');
+const LH = 20, PAD = 8;
+let curLine = 0, errLine = 0;
+function placeHL(id, ln) {
+  const e = $(id);
+  if (!ln) { e.style.display = 'none'; return; }
+  e.style.display = 'block'; e.style.top = (PAD + (ln - 1) * LH - code.scrollTop) + 'px';
+}
+function syncEditor() {
+  gutter.style.transform = `translateY(${-code.scrollTop}px)`;
+  placeHL('#hl', curLine); placeHL('#errhl', errLine);
+}
+function setLine(ln) {
+  if (ln === curLine) return;
+  curLine = ln;
+  if (ln) { // pomakni vrstico v vidno polje
+    const y = PAD + (ln - 1) * LH;
+    if (y < code.scrollTop || y + LH > code.scrollTop + code.clientHeight) code.scrollTop = y - code.clientHeight / 2;
+  }
+  syncEditor();
+}
+function updGutter() { gutter.textContent = Array.from({ length: code.value.split('\n').length }, (_, i) => i + 1).join('\n'); }
+function gotoLine(ln) {
+  const lines = code.value.split('\n'), start = lines.slice(0, ln - 1).join('\n').length + (ln > 1 ? 1 : 0);
+  code.focus(); code.setSelectionRange(start, start + (lines[ln - 1] || '').length);
+}
+function log(msg, cls = 'i', ln) {
+  const d = document.createElement('div');
+  d.className = cls; d.textContent = msg;
+  if (ln) d.onclick = () => gotoLine(ln);
+  $('#log').append(d); $('#log').scrollTop = 1e9;
+}
+function reportCompile() {
+  $('#log').innerHTML = '';
+  const ink = prog.samples.reduce((s, b, i) => { const a = prog.samples[i - 1]; return a && a.ink && b.ink ? s + Math.hypot(b.x - a.x, b.y - a.y) : s; }, 0);
+  for (const n of prog.notes) log(`vrstica ${n.ln}: ${n.msg}`, 'i', n.ln);
+  if (prog.broken) log(`⚠ vrstica ${prog.broken.ln}: ${prog.broken.msg}. Robot nadaljuje, a ne riše več.`, 'e', prog.broken.ln);
+  if (prog.error) log(`✖ vrstica ${prog.error.ln}: ${prog.error.msg}`, 'e', prog.error.ln);
+  else log(`${prog.broken ? '⚠ Program se izvede, svinčnik pa se zlomi' : '✔ Program OK'} – ${prog.segs.length} gibov, ${prog.duration.toFixed(1)} s, narisano ${ink.toFixed(0)} mm črte.`, prog.broken ? 'e' : 'ok');
+  errLine = prog.error ? prog.error.ln : 0; syncEditor();
+}
+
+const sel = $('#examples');
+sel.innerHTML = '<option value="">Primeri…</option>' + Object.keys(EXAMPLES).map(k => `<option>${k}</option>`).join('');
+sel.onchange = () => { if (sel.value) { code.value = EXAMPLES[sel.value]; onCodeChange(); recompileNow(); } sel.value = ''; };
+let tmr = 0;
+function onCodeChange() { updGutter(); syncEditor(); store.set('krl.code', code.value); clearTimeout(tmr); tmr = setTimeout(() => { if (!play.running) recompileNow(); }, 700); }
+function recompileNow() { prog = null; ensureCompiled(); }
+code.addEventListener('input', onCodeChange);
+code.addEventListener('scroll', syncEditor);
+code.addEventListener('keydown', e => {
+  if (e.key === 'Tab') { e.preventDefault(); code.setRangeText('  ', code.selectionStart, code.selectionEnd, 'end'); onCodeChange(); }
+  if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); $('#btnRun').click(); }
+});
+
+$('#btnRun').onclick = () => {
+  ensureCompiled();
+  if (play.t >= prog.duration) resetPlayback();
+  play.stopAt = Infinity; play.running = true;
+};
+$('#btnStep').onclick = () => {
+  ensureCompiled();
+  if (play.t >= prog.duration) resetPlayback();
+  const S = prog.samples;
+  let k = S[Math.min(play.idx + 1, S.length - 1)].seg;
+  if (k >= 0 && play.t >= prog.segs[k].t1 - 1e-9) k++;
+  play.stopAt = prog.segs[k] ? prog.segs[k].t1 : prog.duration; play.running = true;
+};
+$('#btnPause').onclick = () => { play.running = false; };
+$('#btnReset').onclick = () => { ensureCompiled(); resetPlayback(); };
+$('#btnClear').onclick = clearPaper;
+$('#btnBig').onclick = () => $('#paperBox').classList.toggle('big');
+$('#speed').oninput = e => { speed = +e.target.value; $('#speedVal').textContent = speed + ' %'; };
+$('#btnSave').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([code.value.replace(/\n/g, '\r\n')], { type: 'text/plain' }));
+  a.download = 'program.src'; a.click(); URL.revokeObjectURL(a.href);
+};
+$('#btnOpen').onclick = () => $('#file').click();
+$('#file').onchange = async e => { // .dat pred .src, da so točke deklarirane
+  const files = [...e.target.files].sort((a, b) => (/\.dat$/i.test(b.name) ? 1 : 0) - (/\.dat$/i.test(a.name) ? 1 : 0));
+  code.value = (await Promise.all(files.map(f => f.text()))).join('\n');
+  e.target.value = ''; onCodeChange(); recompileNow();
+};
+
+// nastavitve
+const sIn = { tool: $('#sTool'), press: $('#sPress'), spring: $('#sSpring'), preload: $('#sPreload'), breakF: $('#sBreak'), bendF: $('#sBend'), vcp: $('#sVcp') };
+for (const [k, inp] of Object.entries(sIn)) {
+  inp.value = SET[k];
+  inp.onchange = () => {
+    const v = k === 'paper' ? inp.value : parseFloat(inp.value);
+    if (k === 'paper') { try { parseAgg(v, 0); } catch (e) { log('Papir: ' + e.msg, 'e'); inp.value = SET.paper; return; } }
+    else if (!(v >= 0)) { inp.value = SET[k]; return; }
+    SET[k] = v; store.set('krl.set', SET);
+    buildTool(); placePaper(); recompileNow();
+  };
+}
+// plošča Deska / $BASE: drsniki premaknejo in nagnejo desko s papirjem
+const BASE_RNG = { x: [200, 800], y: [-400, 400], z: [-50, 400], a: [-180, 180], b: [-60, 60], c: [-60, 60] };
+const baseVal = aggToFrame(parseAgg(SET.paper, 0));
+const baseStr = () => `{x ${+baseVal.x.toFixed(2)}, y ${+baseVal.y.toFixed(2)}, z ${+baseVal.z.toFixed(2)}, a ${+baseVal.a.toFixed(2)}, b ${+baseVal.b.toFixed(2)}, c ${+baseVal.c.toFixed(2)}}`;
+let baseTmr = 0;
+$('#bgrid').innerHTML = Object.entries(BASE_RNG).map(([k, [lo, hi]]) =>
+  `<b title="${k === 'b' || k === 'c' ? 'naklon' : k === 'a' ? 'zasuk' : 'premik'}">${k.toUpperCase()}</b><input type="range" data-k="${k}" min="${lo}" max="${hi}" step="0.5"><input type="number" data-k="${k}" step="0.5">`).join('');
+function showBase() { for (const inp of $('#bgrid').querySelectorAll('input')) inp.value = +baseVal[inp.dataset.k].toFixed(2); }
+function applyBase() {
+  SET.paper = baseStr(); store.set('krl.set', SET); placePaper();
+  clearTimeout(baseTmr); baseTmr = setTimeout(() => { if (!play.running) recompileNow(); }, 200);
+}
+$('#bgrid').addEventListener('input', e => {
+  const v = parseFloat(e.target.value);
+  if (!isFinite(v)) return;
+  baseVal[e.target.dataset.k] = v; showBase(); applyBase();
+});
+$('#baseDef').onclick = () => { Object.assign(baseVal, aggToFrame(parseAgg(DEF_SET.paper, 0))); showBase(); applyBase(); };
+$('#baseSet').onclick = () => { // base robota takoj = deska; robot nazaj na začetek programa
+  clearTimeout(baseTmr); SET.paper = baseStr(); store.set('krl.set', SET); placePaper(); recompileNow();
+  log(`Base robota (BASE_DATA[1]) nastavljen: ${SET.paper}`, 'ok');
+};
+showBase();
+
+$('#sPath').checked = SET.showPath;
+$('#sPath').onchange = e => { SET.showPath = e.target.checked; store.set('krl.set', SET); if (pathLine) pathLine.visible = SET.showPath; };
+
+// stanje robota
+const statusEl = $('#status');
+function drawStatus() {
+  const q = cur.q || HOME, T = fk(q, Tr(SET.tool, 0, 0));
+  const f = toFrame(cur.seg ? cur.seg.baseInv.clone().multiply(T) : T);
+  const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
+  const F = cur.F || 0, pct = Math.max(0, Math.min(1, F / SET.breakF));
+  const pen = cur.broken ? `<span style="color:var(--err)">ZLOMLJEN</span>`
+    : cur.d > -0.01 ? `riše · ${F.toFixed(1)} N / ${SET.breakF} N · vdor ${cur.d.toFixed(1)} mm` : `v zraku · ${(-cur.d).toFixed(1)} mm`;
+  statusEl.innerHTML = '<h4>Osi</h4>' + q.map((v, i) => row('A' + (i + 1), v.toFixed(2) + '°')).join('')
+    + `<h4>TCP v ${cur.seg ? '$BASE' : 'WORLD'}</h4>` + ['x', 'y', 'z'].map(k => row(k.toUpperCase(), f[k].toFixed(2))).join('')
+    + ['a', 'b', 'c'].map(k => row(k.toUpperCase(), f[k].toFixed(2) + '°')).join('')
+    + `<h4>Svinčnik</h4>${pen}<div id="press"><i style="width:${pct * 100}%;background:${cur.broken || pct > 0.8 ? 'var(--err)' : 'var(--ok)'}"></i></div>`
+    + `<h4>Čas</h4>${play.t.toFixed(1)} / ${prog ? prog.duration.toFixed(1) : 0} s`;
+}
+
+// zagon
+new ResizeObserver(() => {
+  const w = host.clientWidth, h = host.clientHeight;
+  if (!w || !h) return; // pogled je skrit (koda čez celo okno)
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+}).observe(host);
+buildTool(); placePaper();
+code.value = store.get('krl.code', null) || EXAMPLES['Črka R 2× (podprogram)'];
+updGutter(); ensureCompiled();
+let problems;
+try { problems = selfTest(); } catch (e) { problems = ['samotest se je sesul: ' + (e.msg || e)]; }
+if (problems.length) { log('SAMOTEST NI USPEL:', 'e'); problems.forEach(p => log(p, 'e')); }
+window.__selfTest = problems; window.__compile = compile; // za preizkušanje v konzoli
+// kamera s puščicami (le kadar ne tipkaš v urejevalnik)
+const keys = new Set();
+let shiftHeld = false;
+const typing = () => /^(TEXTAREA|INPUT|SELECT)$/.test(document.activeElement?.tagName);
+addEventListener('keydown', e => { shiftHeld = e.shiftKey; if (e.key.startsWith('Arrow') && !typing()) { keys.add(e.key); e.preventDefault(); } });
+addEventListener('keyup', e => { shiftHeld = e.shiftKey; keys.delete(e.key); });
+addEventListener('keydown', e => { // preslednica: zaženi / pavza (ne med tipkanjem kode)
+  if (e.code !== 'Space' || typing() || e.repeat) return;
+  e.preventDefault();
+  if (document.activeElement?.tagName === 'BUTTON') document.activeElement.blur(); // sicer bi preslednica še kliknila gumb
+  (play.running ? $('#btnPause') : $('#btnRun')).click();
+});
+addEventListener('blur', () => keys.clear());
+function moveCamera(dt) {
+  if (!keys.size) return;
+  const fwd = new THREE.Vector3().subVectors(controls.target, camera.position).setY(0).normalize();
+  const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
+  const d = new THREE.Vector3(), v = 700 * dt; // mm/s
+  const ud = (keys.has('ArrowUp') ? 1 : 0) - (keys.has('ArrowDown') ? 1 : 0);
+  if (shiftHeld) d.y += ud * v; else d.addScaledVector(fwd, ud * v);
+  d.addScaledVector(right, ((keys.has('ArrowRight') ? 1 : 0) - (keys.has('ArrowLeft') ? 1 : 0)) * v);
+  camera.position.add(d); controls.target.add(d);
+}
+host.addEventListener('pointerdown', () => document.activeElement?.blur()); // klik v 3D vzame fokus urejevalniku
+
+let last = performance.now();
+let statusTick = 0;
+renderer.setAnimationLoop(now => {
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  stepTo(dt);
+  updateFx(dt);
+  if (camMode === 'free') { moveCamera(dt); controls.update(); }
+  baseAxes.visible = !!cur.seg;
+  if (cur.seg) { baseAxes.matrix.copy(cur.seg.baseM); baseAxes.matrixWorldNeedsUpdate = true; }
+  renderer.render(scene, camera);
+  drawOverlay();
+  if (++statusTick % 3 === 0) drawStatus();
+});
+</script>
+</body>
+</html>
