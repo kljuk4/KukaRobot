@@ -88,6 +88,9 @@ details{margin:0 12px 10px}summary{cursor:pointer;color:var(--muted)}
         <label for="sPreload">Prednapetost (N)</label><input id="sPreload" type="number" min="0" max="20" step="0.1">
         <label for="sBreak">Zlom – osna sila (N)</label><input id="sBreak" type="number" min="0.5" max="100" step="0.5">
         <label for="sBend">Zlom – bočna sila (N)</label><input id="sBend" type="number" min="0.1" max="50" step="0.1">
+        <label for="sPenLen">Kemik: dolžina orodja (mm)</label><input id="sPenLen" type="number" min="100" max="400">
+        <label for="sPenK">Kemik: togost (N/mm)</label><input id="sPenK" type="number" min="0.5" max="200" step="0.5">
+        <label for="sPenBreak">Kemik: zlom (N)</label><input id="sPenBreak" type="number" min="1" max="200" step="1">
         <label for="sVcp" title="Pravi robot v načinu T1: največ 250 mm/s">Hitrost LIN/CIRC (mm/s)</label><input id="sVcp" type="number" min="5" max="2000">
         <label for="sPath">Pokaži načrtovano pot</label><input id="sPath" type="checkbox" style="width:auto">
       </div>
@@ -101,6 +104,10 @@ details{margin:0 12px 10px}summary{cursor:pointer;color:var(--muted)}
     <div id="hint">Preslednica: zaženi / pavza · Puščice: premik kamere · Shift + ↑↓: gor / dol · miška: vrtenje, kolesce: zoom</div>
     <div id="viewTools">
       <div class="seg"><button id="camTop">🔒 Ptičja perspektiva</button><button id="camFree" class="on">🎥 Prosta kamera</button><button id="maxView" title="Robot čez celo okno (Esc za nazaj)">⛶ Robot</button></div>
+      <select id="toolSel" title="Orodje na robotu (v kodi: $TOOL = TOOL_DATA[1] ali [2])" style="width:100%">
+        <option value="1">✏️ TOOL_DATA[1] – svinčnik (vzmetno držalo)</option>
+        <option value="2">🖊️ TOOL_DATA[2] – kemik (pnevmatsko prijemalo)</option>
+      </select>
       <details id="basePanel" open><summary>Base robota = deska (BASE_DATA[1])</summary>
         <div class="bgrid" id="bgrid"></div>
         <div class="row"><button id="baseSet" class="primary" title="Nastavi base robota na lego deske in ponastavi program">Set base</button><button id="baseDef">Privzeto</button></div>
@@ -132,7 +139,9 @@ const store = {
 };
 // press = hod vzmeti (mm), spring = vzmet (N/mm), preload = prednapetost (N), breakF / bendF = zlom konice osno / bočno (N)
 // vir: reports/KUKA risanje in sila svinčnika.md – pisanje ~1 N, vzmet 0.1–0.5 N/mm, lesen svinčnik se bočno zlomi pri ~5–15 N
-const DEF_SET = { tool: 200, press: 5, spring: 0.3, preload: 0.5, breakF: 8, bendF: 5, vcp: 100, paper: '{x 519.18, y -39.69, z 49.55, a 90, b 0, c 2.05}', showPath: true };
+// toolId: 1 = svinčnik v vzmetnem držalu, 2 = kemik v pnevmatskem prijemalu (penLen mm, penK N/mm togost, penBreak N zlom)
+// ponytail: penK in penBreak sta oceni, umeri na pravem prijemalu
+const DEF_SET = { toolId: 1, penLen: 170, penK: 8, penBreak: 15, tool: 200, press: 5, spring: 0.3, preload: 0.5, breakF: 8, bendF: 5, vcp: 100, paper: '{x 506.75, y -43.91, z 44.64, a 58.84, b 0.74, c 1.69}', showPath: true }; // paper = base "meho miza" (SmartPAD, Base No. 2)
 const SET = { ...DEF_SET, ...store.get('krl.set', {}) };
 
 // ponytail: mere robota so ocenjene s fotografije (star mali KUKA), ne iz podatkovnega lista – popravi tu, ko poznaš točen tip s ploščice
@@ -141,6 +150,12 @@ const LIM = [[-170, 170], [-190, 45], [-120, 156], [-185, 185], [-120, 120], [-3
 const HOME = [0, -90, 90, 0, 90, 0];           // svinčnik gleda navzdol
 const VPTP = 90;                                // °/s najhitrejše osi pri PTP (100 %)
 const HOLDER_GAP = 50; // mm od konice svinčnika do držala (glej buildTool)
+const PEN_GAP = 60;    // mm od konice kemika do prstov prijemala
+const PEN_MIN_F = 0.3; // N: kemik piše šele od te sile naprej
+// TOOL_DATA: svinčnik ima smer orodja po X, prijemalo po Z (kot na šolskem robotu: c 180 = Z navzdol)
+const toolMatrix = id => (id === 2 ? Tr(SET.penLen, 0, 0).multiply(Ry(Math.PI / 2)) : Tr(SET.tool, 0, 0));
+const STAND = { x: 306.3, y: -400.1, z: 39.9, hole: 6, half: 25, top: 30 }; // stojalce: konica kemika (TPO), luknja r, polovica širine, višina nad konico
+const GRIP_T = 0.3; // s: pnevmatsko prijemalo se odpre/zapre
 const MU = 0.3;        // ponytail: trenje grafit–papir ocenjeno; vpliva le na bočno silo med drsenjem
 // sila svinčnika na papir (N) pri vdoru d (mm): prednapetost + vzmet; čez hod vzmeti je tog
 function penForce(d) {
@@ -190,7 +205,7 @@ function ik(T, tool, prev) {
   const rr = Math.hypot(W.x, W.y);
   const phi = rr < 1e-6 ? -prev[0] * D2R : Math.atan2(W.y, W.x);
   const r = rr - ROB.a1, h = W.z - ROB.d1, D = Math.hypot(r, h), { a2, d4 } = ROB;
-  if (D > a2 + d4 - 1e-6 || D < Math.abs(a2 - d4) + 1e-6) return { err: 'točka je izven dosega robota' };
+  if (D > a2 + d4 - 1e-6 || D < Math.abs(a2 - d4) + 1e-6) return { err: 'izven dosega' };
   const up = Math.atan2(h, r) + Math.acos((a2 * a2 + D * D - d4 * d4) / (2 * a2 * D));
   const th2 = -up, th3 = -Math.atan2(h - a2 * Math.sin(up), r - a2 * Math.cos(up));
   const M = Rz(phi).multiply(Ry(th3)).invert().multiply(F); // R36 = Rx(-A4)·Ry(A5)·Rx(-A6)
@@ -211,7 +226,7 @@ function ik(T, tool, prev) {
   }
   const q = [wrapNear(-phi * R2D, prev[0]), th2 * R2D, (th3 - th2) * R2D, ...best];
   const bad = q.findIndex((v, i) => v < LIM[i][0] || v > LIM[i][1]);
-  if (bad >= 0) return { err: `os A${bad + 1} bi bila izven omejitve (${q[bad].toFixed(1)}°)` };
+  if (bad >= 0) return { err: `os A${bad + 1} izven omejitve` };
   return { q };
 }
 
@@ -242,28 +257,28 @@ function evalExpr(src, ln, get) {
       if (U === 'AND') return '&&'; if (U === 'OR') return '||'; if (U === 'NOT') return '!'; if (U === 'EXOR') return '!==';
       if (U === 'TRUE' || U === 'FALSE') return U.toLowerCase();
       if (tk === '==') return '==='; if (tk === '<>') return '!==';
-      if (tk === '=') throw err(ln, 'za primerjavo uporabi == (npr. IF i == 2 THEN)');
+      if (tk === '=') throw err(ln, 'uporabi == za primerjavo');
       if (/^([-+*/()<>,]|[<>]=)$/.test(tk)) return tk;
       if (U in FN) return 'F.' + U;
       if (/^[A-Za-z_$]/.test(tk)) return `v(${JSON.stringify(U)})`;
-      throw err(ln, `ne razumem "${tk}" v izrazu "${src.trim()}"`);
+      throw err(ln, `ne razumem "${tk}"`);
     }).join(' ');
-    try { f = new Function('v', 'F', `return (${js});`); } catch { throw err(ln, `napačen izraz: "${src.trim()}"`); }
+    try { f = new Function('v', 'F', `return (${js});`); } catch { throw err(ln, 'napačen izraz'); }
     exprCache.set(src, f);
   }
   return f(get, FN);
 }
 function parseAgg(s, ln, ev) { // ev: računanje izrazov (npr. {x i*10}); brez njega so dovoljene le številke
   s = s.trim();
-  if (!s.startsWith('{') || !s.endsWith('}')) throw err(ln, `pričakujem {…}, dobil "${s}"`);
+  if (!s.startsWith('{') || !s.endsWith('}')) throw err(ln, 'manjka { }');
   const o = {};
   for (const part of splitTop(s.slice(1, -1).replace(/^\s*\w+\s*:/, ''))) {
     if (!part.trim()) continue;
     const m = part.trim().match(/^([A-Za-z]\w*)\s+(.+)$/);
-    if (!m) throw err(ln, `ne razumem "${part.trim()}" – pravilno je npr. "x 30"`);
+    if (!m) throw err(ln, `ne razumem "${part.trim()}"`);
     const txt = m[2].trim();
     const v = /^[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?$/.test(txt) ? parseFloat(txt) : ev ? ev(txt, ln) : NaN;
-    if (typeof v !== 'number' || !isFinite(v)) throw err(ln, `vrednost "${txt}" ni število`);
+    if (typeof v !== 'number' || !isFinite(v)) throw err(ln, `"${txt}" ni število`);
     o[m[1].toUpperCase()] = v;
   }
   return o;
@@ -279,19 +294,19 @@ function parseProgram(text) {
     if (/^DEFDAT\b/.test(U)) { inDat = true; return; }
     if (/^ENDDAT\b/.test(U)) { inDat = false; return; }
     const isDecl = /^(DECL|GLOBAL\s+DECL|INT|REAL|BOOL|E6POS|POS|FRAME|E6AXIS|AXIS)\s/.test(U);
-    if (isDecl && cur && cur.seenStmt) throw err(ln, 'DECL mora biti pred prvim ukazom v podprogramu (tako zahteva KUKA)');
+    if (isDecl && cur && cur.seenStmt) throw err(ln, 'DECL mora biti pred ukazi');
     if ((m = t.match(/^(?:DECL\s+)?(?:GLOBAL\s+)?(?:DECL\s+)?(E6POS|POS|FRAME|E6AXIS|AXIS)\s+(\w+)\s*=\s*(\{.*\})$/i))) { vars[m[2].toUpperCase()] = parseAgg(m[3], ln); return; }
     if ((m = t.match(/^(?:DECL\s+)?(?:GLOBAL\s+)?(?:DECL\s+)?(INT|REAL|BOOL)\s+(.+)$/i))) {
       if (!inDat) { (cur || main).push({ ln, t, U, decl: m[2] }); return; }
       for (const d of splitTop(m[2])) {
         const k = d.indexOf('=');
-        if (k >= 0) vars[d.slice(0, k).trim().toUpperCase()] = evalExpr(d.slice(k + 1), ln, () => { throw err(ln, 'v .dat je dovoljena le številka'); });
+        if (k >= 0) vars[d.slice(0, k).trim().toUpperCase()] = evalExpr(d.slice(k + 1), ln, () => { throw err(ln, 'v .dat le številke'); });
       }
       return;
     }
     if (/^(DECL|EXT|EXTFCT|GLOBAL\s+DECL|SIGNAL|CHAR|E6POS|POS|FRAME|E6AXIS|AXIS)\b/.test(U)) return;
     if ((m = U.match(/^(?:GLOBAL\s+)?DEF\s+(\w+)\s*\((.*)\)/))) {
-      if (cur) throw err(ln, `manjka END pred DEF ${m[1]}`);
+      if (cur) throw err(ln, 'manjka END');
       cur = routines[m[1]] = []; cur.ln = ln;
       const ps = m[2].split(',').filter(p => p.trim());
       cur.params = ps.map(p => p.split(':')[0].trim());
@@ -303,7 +318,7 @@ function parseProgram(text) {
     if (cur) cur.seenStmt = true;
     (cur || main).push({ ln, t, U });
   });
-  if (cur) throw err(cur.ln, 'manjka END na koncu podprograma');
+  if (cur) throw err(cur.ln, 'manjka END');
   for (const [k, r] of Object.entries(routines)) routines[k] = Object.assign(tree(r), { ln: r.ln, params: r.params, modes: r.modes });
   const first = Object.keys(routines)[0];
   return { routines, vars, main: main.length > 0, entry: main.length ? tree(main) : first ? routines[first] : [] };
@@ -313,7 +328,7 @@ function parseProgram(text) {
 function tree(list) {
   let i = 0;
   const word = s => (s.U.match(/^\w+/) || [''])[0];
-  const expect = (w, s) => { if (!list[i] || word(list[i]) !== w) throw err(s.ln, `manjka ${w} za ${word(s)} v vrstici ${s.ln}`); i++; };
+  const expect = (w, s) => { if (!list[i] || word(list[i]) !== w) throw err(s.ln, `manjka ${w}`); i++; };
   function block(enders) {
     const out = [];
     while (i < list.length) {
@@ -323,7 +338,7 @@ function tree(list) {
       if (w === 'FOR') { s.body = block(['ENDFOR']); expect('ENDFOR', s); }
       else if (w === 'WHILE') { s.body = block(['ENDWHILE']); expect('ENDWHILE', s); }
       else if (w === 'IF') { s.then = block(['ELSE', 'ENDIF']); if (list[i] && word(list[i]) === 'ELSE') { i++; s.else = block(['ENDIF']); } expect('ENDIF', s); }
-      else if (['ENDFOR', 'ENDWHILE', 'ENDIF', 'ELSE'].includes(w)) throw err(s.ln, `${w} brez začetka (FOR / WHILE / IF)`);
+      else if (['ENDFOR', 'ENDWHILE', 'ENDIF', 'ELSE'].includes(w)) throw err(s.ln, `${w} brez začetka`);
       out.push(s);
     }
     return out;
@@ -336,7 +351,9 @@ function compile(text) {
   const out = { samples: [], segs: [], error: null, broken: null, notes: [], duration: 0 };
   const robotBase = frame(aggToFrame(parseAgg(SET.paper, 0))); // BASE_DATA[1] = deska (nastavi se desno zgoraj)
   const paperInv = robotBase.clone().invert();
-  const st = { q: HOME.slice(), base: robotBase.clone(), tool: Tr(SET.tool, 0, 0), vcp: SET.vcp, moved: false };
+  // kemik: 'stand' = v stojalu, 'grip' = v prijemalu, 'drop' = padel. Vedno začne v stojalu – program ga mora pobrati.
+  const st = { q: HOME.slice(), base: robotBase.clone(), toolId: SET.toolId, tool: toolMatrix(SET.toolId), vcp: SET.vcp, moved: false,
+    pen: 'stand', gripOpen: true, gripT: -1e9, out: {}, dropPos: null };
 
   // okvir: {x …}, BASE_DATA[1], TOOL_DATA[1], $NULLFRAME, spremenljivka, sestavljeno z ":" (npr. BASE_DATA[1] : {x -110, y 15})
   function frameExpr(src, ln) {
@@ -348,12 +365,12 @@ function compile(text) {
       const v = p.trim(), U = v.toUpperCase();
       let F, mm;
       if (v.startsWith('{')) F = frame(aggToFrame(parseAgg(v, ln, ev)));
-      else if ((mm = U.match(/^BASE_DATA\[\s*(\d+)\s*\]$/))) { if (mm[1] !== '1') throw err(ln, 'simulator pozna le BASE_DATA[1] (deska)'); F = robotBase.clone(); }
-      else if (/^TOOL_DATA\[\s*\d+\s*\]$/.test(U)) F = Tr(SET.tool, 0, 0);
+      else if ((mm = U.match(/^BASE_DATA\[\s*(\d+)\s*\]$/))) { if (!['1', '2'].includes(mm[1])) throw err(ln, 'le BASE_DATA[1] ali [2]'); F = robotBase.clone(); }
+      else if ((mm = U.match(/^TOOL_DATA\[\s*(\d+)\s*\]$/))) F = toolMatrix(+mm[1]);
       else if (['$WORLD', '$NULLFRAME', '$ROBROOT'].includes(U)) F = new THREE.Matrix4();
       else {
         const h = holder(U);
-        if (!h || typeof h[U] !== 'object') throw err(ln, `ne poznam okvirja "${v}" – uporabi {x …}, BASE_DATA[1] ali $NULLFRAME`);
+        if (!h || typeof h[U] !== 'object') throw err(ln, `neznan okvir "${v}"`);
         F = frame(aggToFrame(h[U]));
       }
       return M ? M.multiply(F) : F;
@@ -366,40 +383,72 @@ function compile(text) {
   const holder = b => (b in scope ? scope : b in P.vars ? P.vars : null);
   const getVar = ln => name => {
     const [b, mem] = name.split('.'), h = holder(b);
-    if (!h) throw err(ln, `spremenljivka ${b} ni deklarirana (manjka npr. DECL INT ${b})`);
+    if (!h) throw err(ln, `${b} ni deklarirana`);
     let v = h[b];
     if (mem !== undefined) v = v && typeof v === 'object' ? v[mem] : undefined;
-    if (v === undefined) throw err(ln, `${name} še nima vrednosti`);
+    if (v === undefined) throw err(ln, `${name} nima vrednosti`);
     return v;
   };
   const ev = (src, ln) => evalExpr(src, ln, getVar(ln));
   const num = (src, ln) => { const v = ev(src, ln); if (typeof v !== 'number' || !isFinite(v)) throw err(ln, `"${src.trim()}" ni število`); return v; };
-  const cond = (src, ln) => { const v = ev(src, ln); if (typeof v !== 'boolean') throw err(ln, `pogoj "${src.trim()}" mora biti TRUE ali FALSE (npr. i == 2)`); return v; };
-  const setVar = (name, v, ln) => { const h = holder(name); if (!h) throw err(ln, `spremenljivka ${name} ni deklarirana (manjka DECL)`); h[name] = v; };
+  const cond = (src, ln) => { const v = ev(src, ln); if (typeof v !== 'boolean') throw err(ln, 'pogoj mora biti TRUE/FALSE'); return v; };
+  const setVar = (name, v, ln) => { const h = holder(name); if (!h) throw err(ln, `${name} ni deklarirana`); h[name] = v; };
 
   const mkSample = (q, time, seg) => {
     const T = fk(q, st.tool), p = pos(T), lp = p.clone().applyMatrix4(paperInv);
-    const ax = new THREE.Vector3(el(T, 0, 0), el(T, 1, 0), el(T, 2, 0)).transformDirection(paperInv); // os svinčnika v okvirju papirja
-    return { t: time, q, p, x: lp.x, y: lp.y, d: -lp.z, tilt: Math.acos(Math.min(1, Math.abs(ax.z))), seg, F: 0, ink: false };
+    const c = st.toolId === 2 ? 2 : 0; // smer orodja: kemik po Z, svinčnik po X
+    const ax = new THREE.Vector3(el(T, 0, c), el(T, 1, c), el(T, 2, c)).transformDirection(paperInv); // os pisala v okvirju papirja
+    const onBoard = lp.x > PX0 - 20 && lp.x < PX1 + 20 && lp.y > PY0 - 20 && lp.y < PY1 + 20; // izven deske ni papirja
+    return { t: time, q, p, x: lp.x, y: lp.y, d: onBoard ? -lp.z : -1e3, tilt: Math.acos(Math.min(1, Math.abs(ax.z))), seg, F: 0, ink: false,
+      tool: st.toolId, pen: st.pen, gripOpen: st.gripOpen, drop: st.dropPos, out17: !!st.out[17], out18: !!st.out[18] };
   };
+  // kemik v togem prijemalu: sila = togost × vdor; nad silo zdrsa se kemik potisne navzgor in tam ostane
+  function penContact(s, ln) {
+    const dx = s.p.x - STAND.x, dy = s.p.y - STAND.y, dxy = Math.hypot(dx, dy), foot = Math.abs(dx) < STAND.half && Math.abs(dy) < STAND.half;
+    if (st.pen === 'stand' && !st.gripOpen && dxy < 15 && s.p.z < STAND.z + 80 && s.p.z > STAND.z - 60)
+      throw err(ln, 'trk: prsti zadenejo kemik');
+    if (st.pen === 'grip' && foot && dxy > STAND.hole && s.p.z < STAND.z + STAND.top - 0.5)
+      throw err(ln, 'trk: kemik zadene stojalo');
+    if (st.pen === 'grip' && dxy <= STAND.hole && s.p.z < STAND.z - 0.5)
+      throw err(ln, 'trk: kemik v dno stojala');
+    if (s.d > PEN_GAP) throw err(ln, 'trk: prijemalo zadene desko');
+    if (out.broken || s.d < -0.01) return;
+    if (st.pen !== 'grip') { note(ln, 'nopen', 'kemik ni v prijemalu – najprej ga poberi'); return; }
+    const F = SET.penK * Math.max(0, s.d);
+    if (F > SET.penBreak) { out.broken = { ln, t: s.t, x: s.x, y: s.y, msg: 'kemik se zlomi' }; return; }
+    s.F = F; s.ink = F >= PEN_MIN_F;
+  }
+  // ventil: $OUT[17] && !$OUT[18] zapre, $OUT[18] && !$OUT[17] odpre; ob zapiranju v stojalu prime kemik, ob odpiranju ga spusti
+  const now = () => t; // trenutni čas programa (s)
+  function valve(ln) {
+    const close = st.out[17] && !st.out[18], open = st.out[18] && !st.out[17];
+    if ((!close && !open) || open === st.gripOpen) return;
+    st.gripOpen = open; st.gripT = t;
+    if (st.toolId !== 2) { note(ln, 'notool', 'na robotu ni prijemala'); return; }
+    const p = pos(fk(st.q, st.tool)), atStand = Math.hypot(p.x - STAND.x, p.y - STAND.y, p.z - STAND.z) < 5;
+    if (close && st.pen === 'stand' && atStand) st.pen = 'grip';
+    else if (close && st.pen !== 'grip') note(ln, 'empty', 'prijemalo je prazno');
+    else if (open && st.pen === 'grip') {
+      if (atStand) st.pen = 'stand';
+      else { st.pen = 'drop'; st.dropPos = { x: p.x, y: p.y }; out.dropLn = ln; }
+    }
+  }
   // stik s papirjem: sila, risanje, zlom svinčnika, trk držala
   function contact(s, prev, ln) {
-    if (s.d > HOLDER_GAP) throw err(ln, `TRK: držalo svinčnika je zadelo desko (${s.d.toFixed(0)} mm pod papirjem) – robot se ustavi`);
+    if (s.tool === 2) return penContact(s, ln);
+    if (s.d > HOLDER_GAP) throw err(ln, 'trk: držalo zadene desko');
     if (out.broken || s.d < -0.01) return;
     s.F = penForce(s.d);
     const moving = Math.hypot(s.x - prev.x, s.y - prev.y) > 1e-6;
     const lat = s.F * (Math.sin(s.tilt) + (moving ? MU : 0));
-    const why = s.d > SET.press ? `vzmet je stisnjena do konca (hod ${SET.press} mm, z bi moral biti nad -${SET.press})`
-      : s.F > SET.breakF ? `sila ${s.F.toFixed(1)} N je večja od ${SET.breakF} N`
-      : lat > SET.bendF ? `bočna sila ${lat.toFixed(1)} N je večja od ${SET.bendF} N (naklon svinčnika ${(s.tilt * R2D).toFixed(0)}°)` : '';
-    if (why) { out.broken = { ln, t: s.t, x: s.x, y: s.y, msg: `svinčnik se zlomi – ${why}` }; s.F = 0; return; }
+    if (s.d > SET.press || s.F > SET.breakF || lat > SET.bendF) { out.broken = { ln, t: s.t, x: s.x, y: s.y, msg: 'svinčnik se zlomi' }; s.F = 0; return; }
     s.ink = true;
   }
   S.push(mkSample(HOME.slice(), 0, -1));
 
-  function addSeg(ln, type, qs, dur) { // qs[0] = trenutna lega
+  function addSeg(ln, qs, dur) { // qs[0] = trenutna lega
     if (qs.length < 2) return;
-    const seg = { ln, type, t0: t, t1: t + dur, baseM: st.base.clone(), baseInv: st.base.clone().invert(), base: pos(st.base).applyMatrix4(paperInv) };
+    const seg = { ln, t1: t + dur, baseM: st.base.clone(), baseInv: st.base.clone().invert(), base: pos(st.base).applyMatrix4(paperInv) };
     const si = out.segs.push(seg) - 1, n = qs.length;
     for (let k = 1; k < n; k++) {
       const s = mkSample(qs[k], t + dur * k / (n - 1), si);
@@ -417,18 +466,18 @@ function compile(text) {
     return st.base.clone().multiply(local);
   }
 
-  function path(ln, type, n, poseAt, dur) {
+  function path(ln, n, poseAt, dur) {
     const qs = [st.q];
     let fail = null;
     for (let k = 1; k < n; k++) {
       const prev = qs[qs.length - 1], r = ik(poseAt(ease(k / (n - 1))), st.tool, prev);
       if (r.err) { fail = r.err; break; }
       const j = r.q.findIndex((v, i) => Math.abs(v - prev[i]) > 5);
-      if (j >= 0) { fail = `singularnost – os A${j + 1} bi morala skočiti (${prev[j].toFixed(0)}° → ${r.q[j].toFixed(0)}°)`; break; }
+      if (j >= 0) { fail = `singularnost (A${j + 1})`; break; }
       qs.push(r.q);
     }
-    addSeg(ln, type, qs, dur * (qs.length - 1) / (n - 1));
-    if (fail) throw err(ln, `${type}: ${fail}`);
+    addSeg(ln, qs, dur * (qs.length - 1) / (n - 1));
+    if (fail) throw err(ln, fail);
   }
 
   function doPTP(ln, tg) {
@@ -436,16 +485,16 @@ function compile(text) {
     if (tg.axis) {
       q1 = st.q.map((v, i) => tg.axis['A' + (i + 1)] ?? v);
       const bad = q1.findIndex((v, i) => v < LIM[i][0] || v > LIM[i][1]);
-      if (bad >= 0) throw err(ln, `PTP: os A${bad + 1} izven omejitve (${q1[bad]}°)`);
+      if (bad >= 0) throw err(ln, `os A${bad + 1} izven omejitve`);
     } else {
       const r = ik(target(tg.cart), st.tool, st.q);
-      if (r.err) throw err(ln, 'PTP: ' + r.err);
+      if (r.err) throw err(ln, r.err);
       q1 = r.q;
     }
     const q0 = st.q, dq = Math.max(...q1.map((v, i) => Math.abs(v - q0[i])));
     const n = Math.max(2, Math.ceil(dq / 0.5) + 1), qs = [];
     for (let k = 0; k < n; k++) { const s = ease(k / (n - 1)); qs.push(q0.map((v, i) => v + (q1[i] - v) * s)); }
-    addSeg(ln, 'PTP', qs, Math.max(0.1, dq / VPTP));
+    addSeg(ln, qs, Math.max(0.1, dq / VPTP));
   }
 
   function doLIN(ln, c) {
@@ -453,37 +502,37 @@ function compile(text) {
     const p0 = pos(T0), p1 = pos(T1), r0 = quat(T0), r1 = quat(T1);
     const L = p0.distanceTo(p1), ang = r0.angleTo(r1) * R2D;
     const n = Math.max(2, Math.ceil(Math.max(L, ang * 2)) + 1);
-    path(ln, 'LIN', n, s => compose(p0.clone().lerp(p1, s), r0.clone().slerp(r1, s)), Math.max(0.05, L / st.vcp, ang / VPTP));
+    path(ln, n, s => compose(p0.clone().lerp(p1, s), r0.clone().slerp(r1, s)), Math.max(0.05, L / st.vcp, ang / VPTP));
   }
 
   function doCIRC(ln, cAux, cEnd, ca) { // ca = CA kot v stopinjah (neobvezno)
     const T0 = fk(st.q, st.tool), Ta = target(cAux), Te = target(cEnd);
     const P0 = pos(T0), P1 = pos(Ta), P2 = pos(Te), r0 = quat(T0), r1 = quat(Te);
     const u = P1.clone().sub(P0), v = P2.clone().sub(P0), w = u.clone().cross(v), w2 = w.lengthSq();
-    if (w2 < 1e-3) throw err(ln, 'CIRC: začetna, pomožna in končna točka ležijo na premici – ni krožnice');
+    if (w2 < 1e-3) throw err(ln, 'CIRC: točke na premici');
     const C = P0.clone().add(v.clone().multiplyScalar(u.lengthSq()).sub(u.clone().multiplyScalar(v.lengthSq())).cross(w).multiplyScalar(1 / (2 * w2)));
     const R = P0.distanceTo(C), e1 = P0.clone().sub(C).normalize(), e2 = w.clone().normalize().cross(e1);
     const d2 = P2.clone().sub(C);
     let sweep = Math.atan2(d2.dot(e2), d2.dot(e1)); if (sweep <= 0) sweep += 2 * Math.PI;
     if (ca !== undefined) sweep = ca * D2R; // CA: kot loka od začetka (+ smer skozi pomožno točko, − nasprotno)
     const L = R * Math.abs(sweep), n = Math.max(3, Math.ceil(L) + 1);
-    path(ln, 'CIRC', n, s => compose(
+    path(ln, n, s => compose(
       C.clone().addScaledVector(e1, R * Math.cos(s * sweep)).addScaledVector(e2, R * Math.sin(s * sweep)),
       r0.clone().slerp(r1, s)), Math.max(0.05, L / st.vcp));
   }
 
   function targets(str, ln) {
     str = str.replace(/\b(C_PTP|C_DIS|C_VEL|C_ORI|C_SPL)\b/gi, '').replace(/\bCA\s+[-\d.]+/i, '');
-    if (/\{[^}]*$/.test(str)) throw err(ln, 'manjka zaključni }');
+    if (/\{[^}]*$/.test(str)) throw err(ln, 'manjka }');
     const rest = str.replace(/\{[^}]*\}|[A-Za-z_$]\w*/g, '').replace(/[\s,]/g, '');
-    if (rest) throw err(ln, `ne razumem "${rest}" – manjka { ali }?`);
+    if (rest) throw err(ln, `ne razumem "${rest}"`);
     return (str.match(/\{[^}]*\}|[A-Za-z_$]\w*/g) || []).map(tk => {
       let o;
       if (tk[0] === '{') o = parseAgg(tk, ln, ev);
       else {
         const name = tk.toUpperCase(), h = holder(name);
         o = (h && typeof h[name] === 'object' ? h[name] : null) ?? (name === 'HOME' || name === 'XHOME' ? Object.fromEntries(HOME.map((v, i) => ['A' + (i + 1), v])) : null);
-        if (!o) throw err(ln, `neznana točka "${tk}" (ni v DECL / .dat)`);
+        if (!o) throw err(ln, `neznana točka "${tk}"`);
       }
       return Object.keys(o).some(k => /^A[1-6]$/.test(k)) ? { axis: o } : { cart: o };
     });
@@ -492,19 +541,19 @@ function compile(text) {
   function exec(s, depth) {
     const { ln, t, U } = s;
     let m;
-    const tick = () => { if (++ops > 200000) throw err(ln, 'preveč korakov – je zanka neskončna?'); };
+    const tick = () => { if (++ops > 200000) throw err(ln, 'neskončna zanka'); };
     tick();
     if (s.decl !== undefined) { // DECL INT i, n = 5
       for (const d of splitTop(s.decl)) {
         const k = d.indexOf('='), name = (k < 0 ? d : d.slice(0, k)).trim().toUpperCase();
-        if (!/^\w+$/.test(name)) throw err(ln, `napačno ime spremenljivke "${name}"`);
+        if (!/^\w+$/.test(name)) throw err(ln, `napačno ime "${name}"`);
         if (k >= 0) scope[name] = ev(d.slice(k + 1), ln); else if (!(name in scope)) scope[name] = undefined;
       }
       return;
     }
     if (s.body && /^FOR\b/.test(U)) {
       m = t.match(/^FOR\s+(\w+)\s*=\s*(.+?)\s+TO\s+(.+?)(?:\s+STEP\s+(.+))?$/i);
-      if (!m) throw err(ln, 'pravilno je: FOR i = 1 TO 5   (ali FOR i = 1 TO 9 STEP 2)');
+      if (!m) throw err(ln, 'pravilno: FOR i = 1 TO 5');
       const name = m[1].toUpperCase(), end = num(m[3], ln), stp = m[4] ? num(m[4], ln) : 1;
       if (!stp) throw err(ln, 'STEP ne sme biti 0');
       let i = num(m[2], ln);
@@ -519,49 +568,70 @@ function compile(text) {
     }
     if (s.then) {
       m = t.match(/^IF\s+(.+?)\s+THEN$/i);
-      if (!m) throw err(ln, 'pravilno je: IF pogoj THEN');
+      if (!m) throw err(ln, 'pravilno: IF … THEN');
       for (const x of cond(m[1], ln) ? s.then : s.else || []) exec(x, depth);
       return;
     }
     if ((m = U.match(/^(S?PTP|S?LIN|S?CIRC)\b/))) {
       const kind = m[1].replace(/^S/, ''), tg = targets(t.slice(m[1].length), ln);
-      if (!st.moved && kind !== 'PTP') throw err(ln, 'prvi gib v programu mora biti PTP (KUKA zahteva BCO premik)');
+      if (!st.moved && kind !== 'PTP') throw err(ln, 'prvi gib mora biti PTP');
       if (!st.moved && tg[0] && tg[0].cart && !['X', 'Y', 'Z', 'A', 'B', 'C'].every(k => k in tg[0].cart))
-        note(ln, 'BCO', 'prvi PTP na pravem robotu mora biti popoln (vse osi ali X,Y,Z,A,B,C, npr. PTP HOME)');
+        note(ln, 'BCO', 'prvi PTP mora biti popoln (npr. PTP HOME)');
       const apo = U.match(/\bC_(DIS|PTP|VEL|ORI)\b/);
-      if (apo) note(ln, apo[0], `${apo[0]}: na pravem robotu bo vogal zaobljen (začne ~3 mm pred točko), simulator gre točno v točko`);
+      if (apo) note(ln, apo[0], `${apo[0]}: vogal bo zaobljen`);
       st.moved = true;
       if (kind === 'CIRC') {
-        if (tg.length !== 2) throw err(ln, 'CIRC potrebuje 2 točki: {pomožna} {končna}');
-        if (tg[0].axis || tg[1].axis) throw err(ln, 'CIRC ne sprejme osnih koordinat (A1..A6)');
+        if (tg.length !== 2) throw err(ln, 'CIRC rabi 2 točki');
+        if (tg[0].axis || tg[1].axis) throw err(ln, 'CIRC ne sprejme A1..A6');
         const ca = t.match(/\bCA\s+([-+]?\d*\.?\d+)/i);
         return doCIRC(ln, tg[0].cart, tg[1].cart, ca ? parseFloat(ca[1]) : undefined);
       }
-      if (tg.length !== 1) throw err(ln, `${kind} potrebuje točno 1 točko`);
-      if (kind === 'LIN' && tg[0].axis) throw err(ln, 'LIN ne sprejme osnih koordinat (A1..A6) – uporabi PTP');
+      if (tg.length !== 1) throw err(ln, `${kind} rabi 1 točko`);
+      if (kind === 'LIN' && tg[0].axis) throw err(ln, 'LIN ne sprejme A1..A6');
       return kind === 'PTP' ? doPTP(ln, tg[0]) : doLIN(ln, tg[0].cart);
     }
     if ((m = t.match(/^\$(BASE|TOOL)\s*=\s*(.+)$/i))) {
       const M = frameExpr(m[2], ln);
-      if (m[1].toUpperCase() === 'BASE') st.base = M; else st.tool = M;
+      if (m[1].toUpperCase() === 'BASE') st.base = M;
+      else {
+        st.tool = M;
+        const td = m[2].trim().match(/^TOOL_DATA\[\s*(\d+)\s*\]$/i); // TOOL_DATA[2] = kemik v prijemalu
+        if (td) {
+          const id = +td[1] === 2 ? 2 : 1;
+          st.toolId = id;
+        }
+      }
       return;
     }
     if ((m = t.match(/^\$VEL\.CP\s*=\s*(.+)$/i))) { st.vcp = num(m[1], ln) * 1000; return; }
-    if ((m = t.match(/^WAIT\s+SEC\s+(.+)$/i))) { addSeg(ln, 'WAIT', [st.q, st.q], Math.max(0, num(m[1], ln))); return; }
-    if (/^(LOOP|REPEAT|SWITCH|EXIT)\b/.test(U)) throw err(ln, `${U.split(/\W/)[0]} v tej verziji še ni podprt (uporabi FOR ali WHILE)`);
+    if ((m = t.match(/^\$OUT\s*\[\s*(\d+)\s*\]\s*=\s*(.+)$/i))) { // pnevmatski ventil prijemala
+      const v = ev(m[2], ln);
+      if (!(typeof v === 'boolean' || v === 0 || v === 1)) throw err(ln, '$OUT = TRUE ali FALSE');
+      st.out[+m[1]] = v === true || v === 1; valve(ln); return;
+    }
+    if ((m = t.match(/^WAIT\s+FOR\s+(NOT\s+)?\$IN\s*\[\s*(\d+)\s*\](?:\s*==\s*(TRUE|FALSE))?$/i))) {
+      const n = +m[2], want = !m[1] !== (m[3] || '').toUpperCase().startsWith('F');
+      const sensor = n === 17 ? !st.gripOpen : n === 18 ? st.gripOpen : null;
+      if (sensor === null) throw err(ln, `$IN[${n}] ni povezan`);
+      if (sensor !== want) throw err(ln, `WAIT FOR $IN[${n}] čaka v nedogled`);
+      addSeg(ln, [st.q, st.q], Math.max(0, st.gripT + GRIP_T - now())); return; // v exec je t besedilo ukaza
+    }
+    if (/^\$BASE\d+\s*=/.test(U)) throw err(ln, `${U.match(/^\$BASE\d+/)[0]} ne obstaja`);
+    if ((m = t.match(/^WAIT\s+SEC\s+(.+)$/i))) { addSeg(ln, [st.q, st.q], Math.max(0, num(m[1], ln))); return; }
+    if (/^(LOOP|REPEAT|SWITCH|EXIT)\b/.test(U)) throw err(ln, `${U.split(/\W/)[0]} ni podprt`);
     if (/^(INI|HALT|BAS\s*\(|PDAT_ACT|FDAT_ACT|LDAT_ACT|BAS_COMMAND)/.test(U)) return;
     if (/^(\$|PULSE|TRIGGER|INTERRUPT|CONTINUE)/.test(U)) {
       const k = U.match(/^\$?\w+/)[0];
-      if (!noted.has(k)) { noted.add(k); out.notes.push({ ln, msg: `"${k}" simulator še ne podpira – prezrto` }); }
+      note(ln, k, `${k} prezrto`);
       return;
     }
     if ((m = t.match(/^(\w+)\s*\((.*)\)$/))) { // klic podprograma, npr. kvadrat(-200, 20)
       const r = P.routines[m[1].toUpperCase()];
       if (!r) throw err(ln, `podprogram ${m[1]}() ne obstaja`);
       const raw = m[2].trim() ? splitTop(m[2]).map(a => a.trim()) : [];
-      if (raw.length !== r.params.length) throw err(ln, `${m[1]}() pričakuje ${r.params.length} parametrov, dobil ${raw.length}`);
-      if (depth > 20) throw err(ln, 'preveč gnezdenih klicev (ali se podprogram kliče sam?)');
-      raw.forEach((a, i) => { if (r.modes[i] === 'OUT' && !/^\w+$/.test(a)) throw err(ln, `parameter ${r.params[i]} je :OUT – podaj spremenljivko, ne "${a}" (ali v DEF napiši ${r.params[i]}:IN)`); });
+      if (raw.length !== r.params.length) throw err(ln, `${m[1]}() rabi ${r.params.length} parametrov`);
+      if (depth > 20) throw err(ln, 'preveč klicev');
+      raw.forEach((a, i) => { if (r.modes[i] === 'OUT' && !/^\w+$/.test(a)) throw err(ln, `${r.params[i]} je :OUT – podaj spremenljivko`); });
       const local = Object.fromEntries(r.params.map((p, i) => [p, ev(raw[i], ln)]));
       const saved = scope;
       scope = local;
@@ -573,7 +643,7 @@ function compile(text) {
       const k = m[1].toUpperCase(), v = m[3].trim();
       if (m[2]) {
         const h = holder(k);
-        if (!h || typeof h[k] !== 'object') throw err(ln, `${m[1]} ni točka (E6POS/POS/FRAME)`);
+        if (!h || typeof h[k] !== 'object') throw err(ln, `${m[1]} ni točka`);
         h[k][m[2].toUpperCase()] = num(v, ln);
       } else if (v.startsWith('{')) {
         const h = holder(k);
@@ -581,7 +651,7 @@ function compile(text) {
       } else setVar(k, ev(v, ln), ln);
       return;
     }
-    throw err(ln, `neznan ukaz: "${t}"`);
+    throw err(ln, `neznan ukaz "${t}"`);
   }
 
   try {
@@ -592,6 +662,7 @@ function compile(text) {
     out.error = e && e.msg ? e : { ln: 0, msg: String(e) };
   }
   out.duration = S[S.length - 1].t;
+  out.penEnd = st.pen;
   return out;
 }
 
@@ -609,6 +680,7 @@ function selfTest() {
   }
   if (tried < 50) bad.push(`IK: premalo dosegljivih leg (${tried})`);
   const userPaper = SET.paper; SET.paper = DEF_SET.paper; // primeri so pisani za privzeto desko
+  const userTool = SET.toolId; SET.toolId = 1;             // in za svinčnik
   for (const [name, src] of Object.entries(EXAMPLES)) { const p = compile(src); if (p.error) bad.push(`${name}: vrstica ${p.error.ln}: ${p.error.msg}`); }
   SET.paper = userPaper;
   // FOR/IF/WHILE: 0.5 + 1 + 0.5 + 0.25*2 = 2.5 s
@@ -652,7 +724,32 @@ function selfTest() {
   if (!stiff || !stiff.broken) bad.push('svinčnik: pretrda vzmet (50 N/mm) pri z -3 ga mora zlomiti');
   const crash = press(-80);
   if (!crash.error) bad.push('svinčnik: z -80 mora ustaviti robota (trk držala v desko)');
-  SET.paper = userPaper;
+  // kemik v pnevmatskem prijemalu: $TOOL = TOOL_DATA[2]
+  const PICK = '$TOOL = TOOL_DATA[2]\n$BASE = $NULLFRAME\nPTP {x 306.3, y -405.1, z 172.1, a 105, b -1.7, c 179.5}\n$OUT[17]=FALSE\n$OUT[18]=TRUE\n' +
+    'LIN {x 306.3, y -400.1, z 39.9, a 105, b -1.7, c 179.5}\n$OUT[18]=FALSE\n$OUT[17]=TRUE\nLIN {x 306.3, y -405.1, z 172.1, a 105, b -1.7, c 179.5}\n';
+  const noPick = compile(`$TOOL = TOOL_DATA[2]\n$BASE=${DEF_SET.paper}\nPTP{x -100, y 0, z 10}\nPTP{z -1}\nLIN{x -60, y 0}`);
+  if (noPick.error || noPick.samples.some(s => s.ink) || !noPick.notes.some(n => /poberi/.test(n.msg))) bad.push('kemik: brez pobiranja ne sme risati in mora opozoriti "poberi"');
+  const pen = (z, z2) => compile(`${PICK}$BASE=${DEF_SET.paper}\nPTP{x -100, y 0, z 10}\nPTP{z ${z}}\nLIN{x -60, y 0}\nPTP{z 10}` +
+    (z2 === undefined ? '' : `\nPTP{x -100, y 20, z 10}\nPTP{z ${z2}}\nLIN{x -60, y 20}\nPTP{z 10}`));
+  const pOk = pen(-1);
+  if (pOk.error || pOk.broken || !pOk.samples.some(s => s.ink && s.tool === 2)) bad.push('kemik: z -1 mora risati brez zloma');
+  const pBrk = pen(-5, -1);
+  if (pBrk.error || !pBrk.broken || pBrk.broken.msg !== 'kemik se zlomi') bad.push('kemik: z -5 ga mora zlomiti ("kemik se zlomi")');
+  else if (pBrk.samples.some(s => s.ink && s.t > pBrk.broken.t)) bad.push('kemik: po zlomu ne sme več risati');
+  if (press(-8).broken?.msg !== 'svinčnik se zlomi') bad.push('sporočilo: mora biti kratko "svinčnik se zlomi"');
+  if (!pen(-80).error) bad.push('kemik: z -80 mora ustaviti robota (trk prijemala v desko)');
+  // naloga 3: kemik s stojala, dve R v dveh bazah, kemik nazaj na stojalo
+  const task = EXAMPLES['Naloga 3: kemik s stojala, R v 2 bazah'] || '';
+  const tk = compile(task), tkInk = tk.samples.reduce((s, b, i) => { const a = tk.samples[i - 1]; return a && a.ink && b.ink ? s + Math.hypot(b.x - a.x, b.y - a.y) : s; }, 0);
+  if (tk.error || !isFinite(tk.duration) || Math.abs(tkInk - 326.8) > 4 || tk.penEnd !== 'stand') bad.push(`naloga 3: mora narisati 2× R (~327 mm) in vrniti kemik na stojalo (${tk.error ? tk.error.msg : tkInk.toFixed(0) + ' mm, kemik: ' + tk.penEnd})`);
+  const stand = (body) => compile(`DECL E6POS TNO = {x 306.3, y -405.1, z 172.1, a 105, b -1.7, c 179.5}\nDECL E6POS TPO = {x 306.3, y -400.1, z 39.9, a 105, b -1.7, c 179.5}\n$TOOL = TOOL_DATA[2]\n$BASE = $NULLFRAME\nPTP TNO\n${body}`);
+  if (!stand('$OUT[18]=FALSE\n$OUT[17]=TRUE\nLIN TPO').error) bad.push('prijemalo: spust z zaprtim prijemalom na kemik mora biti trk');
+  if (stand('$OUT[17]=FALSE\n$OUT[18]=TRUE\nLIN TPO\n$OUT[18]=FALSE\n$OUT[17]=TRUE\nLIN TNO\n$OUT[17]=FALSE\n$OUT[18]=TRUE').penEnd !== 'drop') bad.push('prijemalo: odpiranje nad stojalom mora spustiti kemik (pade)');
+  if (!stand('$OUT[17]=FALSE\n$OUT[18]=TRUE\nWAIT FOR $IN[17]').error) bad.push('prijemalo: WAIT FOR $IN[17] pri odprtem prijemalu mora javiti, da čaka v nedogled');
+  if (!compile('$BASE1={x 0, y 0, z 0, a 0, b 0, c 0}').error) bad.push('KRL: $BASE1 ne obstaja, mora biti napaka');
+  const diag = task.replace(/\n\$BASE = \$NULLFRAME\s*;[^\n]*\nLIN TNO\nLIN TPO/, '\n$BASE = $NULLFRAME\nLIN TPO');
+  if (diag === task || !compile(diag).error) bad.push('prijemalo: poševni LIN TPO iz risanja (brez TNO) mora zadeti stojalo');
+  SET.paper = userPaper; SET.toolId = userTool;
   return bad;
 }
 
@@ -719,6 +816,50 @@ DEF kvadrat(x0:IN, s:IN)
   PTP{z 10}
 END
 `,
+  'Naloga 3: kemik s stojala, R v 2 bazah': `; KukaVaja3 – 1 SK: kemik vzame s stojala, nariše R v dveh bazah, kemik vrne
+; prijemalo: $OUT[18]=TRUE odpre, $OUT[17]=TRUE zapre
+;            $IN[18] = odprto, $IN[17] = zaprto
+DECL E6POS TNO = {x 306.3, y -405.1, z 172.1, a 105, b -1.7, c 179.5}  ; nad stojalom
+DECL E6POS TPO = {x 306.3, y -400.1, z 39.9, a 105, b -1.7, c 179.5}   ; kemik v stojalu
+$TOOL = TOOL_DATA[2]     ; kemik v prijemalu (na robotu izbereš na SmartPAD-u)
+$BASE = $NULLFRAME       ; TNO in TPO sta v WORLD
+PTP TNO
+$OUT[17]=FALSE
+$OUT[18]=TRUE            ; odpri
+WAIT FOR $IN[18]
+WAIT SEC 1
+LIN TPO
+$OUT[18]=FALSE
+$OUT[17]=TRUE            ; zapri = primi kemik
+WAIT FOR $IN[17]
+WAIT SEC 1
+LIN TNO
+$BASE = BASE_DATA[2]              ; X1, Y1 = meho miza {x 506.75, y -43.91, z 44.64, a 58.84, b 0.74, c 1.69}
+R()
+$BASE = BASE_DATA[2] : {a -90}    ; X, Y = zasukano za -90° V RAVNINI MIZE
+; (ne {… a -31.16, b 0.74, c 1.69}: z istima B in C je to druga, nagnjena ravnina)
+R()
+$BASE = $NULLFRAME       ; nazaj v WORLD
+LIN TNO
+LIN TPO
+$OUT[17]=FALSE
+$OUT[18]=TRUE            ; odpri = pusti kemik v stojalu
+WAIT FOR $IN[18]
+WAIT SEC 1
+LIN TNO
+
+DEF R()
+PTP{x 0, y 0, z 20}
+LIN{x 0, y 0, z -0.1}
+LIN{x 0, y 50}
+LIN{x 15, y 50}
+CIRC{x 27.5, y 37.5}{x 15, y 25}
+LIN{x 0, y 25}
+LIN{x 15, y 25}
+LIN{x 30, y 0}
+LIN{x 30, y 0, z 20}
+END
+`,
   'Prazen program': `DEF moj_program()
 ; base robota = deska (BASE_DATA[1]), nastavi ga desno zgoraj
 PTP HOME
@@ -781,40 +922,63 @@ J[3].add(cyl(44, 170, MT.orange, 220, 0, 0, 'x'), J[4]);
 J[4].position.set(ROB.d4, 0, 0);
 J[4].add(cyl(46, 100, MT.orange, 0, 0, 0, 'y'), J[5]);
 J[5].add(cyl(34, 40, MT.orange, 35, 0, 0, 'x'), cyl(38, 20, MT.black, 65, 0, 0, 'x'));
-const toolG = new THREE.Group(), penG = new THREE.Group();
-toolG.position.x = ROB.d6; J[5].add(toolG);
+const toolG = new THREE.Group(), penG = new THREE.Group();   // 1: svinčnik v vzmetnem držalu
+const gripG = new THREE.Group(), bicG = new THREE.Group();   // 2: pnevmatsko prijemalo s kemikom
+toolG.position.x = gripG.position.x = ROB.d6; J[5].add(toolG, gripG);
+MT.blue = mat(0x2346c8); MT.clear = mat(0xdfe8f5, { transparent: true, opacity: 0.75 }); MT.alu = mat(0x8fa0b4, { roughness: .4, metalness: .5 });
 function buildTool() {
-  toolG.clear(); penG.clear();
+  toolG.clear(); penG.clear(); gripG.clear(); bicG.clear();
   const L = SET.tool;
   toolG.add(box(40, 70, 70, MT.metal, 20, 0, 0), cyl(14, L - 90, MT.metal, 40 + (L - 90) / 2, 0, 0, 'x'), penG);
   penTip = mesh(new THREE.ConeGeometry(4.5, 10, 24), MT.graphite, L - 5, 0, 0, 'x');
   penG.add(cyl(4.5, 70, MT.pen, L - 45, 0, 0, 'x'), penTip);
+  // ponytail: splošen videz prijemala, prilagodi po sliki pravega
+  const P = SET.penLen, f1 = P - PEN_GAP; // prsti se končajo PEN_GAP nad konico
+  gripG.add(box(20, 70, 70, MT.metal, 10, 0, 0),                       // prirobnična plošča
+    box(f1 - 60, 60, 80, MT.alu, 20 + (f1 - 60) / 2, 0, 0),           // pnevmatski cilinder
+    fingerA = box(40, 9, 26, MT.black, f1 - 20, 0, 9.5), fingerB = box(40, 9, 26, MT.black, f1 - 20, 0, -9.5), bicG); // prsta
+  bicG.add(cyl(5, P - 60, MT.clear, 40 + (P - 60) / 2, 0, 0, 'x'),     // telo kemika
+    cyl(5.2, 18, MT.blue, 50, 0, 0, 'x'),                               // pokrovček
+    bicTip = mesh(new THREE.ConeGeometry(4, 12, 20), MT.metal, P - 6, 0, 0, 'x')); // konica
+  freeG.clear();
+  const free = bicG.clone(); free.position.x = -P; free.visible = true; freeG.add(free); // prost kemik: konica v izhodišču
+}
+let fingerA = null, fingerB = null, bicTip = null;
+const freeG = new THREE.Group(); root.add(freeG); // kemik izven prijemala (v stojalu ali padel)
+root.add(box(2 * STAND.half, 2 * STAND.half, STAND.z + STAND.top, mat(0x59606b), STAND.x, STAND.y, (STAND.z + STAND.top) / 2)); // stojalce
+// kemik in prsti iz stanja vzorca
+function setPenVis(s) {
+  const o = s.gripOpen ? 18 : 9.5;
+  fingerA.position.z = o; fingerB.position.z = -o;
+  bicG.visible = s.pen === 'grip';
+  freeG.visible = s.pen !== 'grip';
+  if (s.pen === 'stand') { freeG.position.set(STAND.x, STAND.y, STAND.z); freeG.rotation.set(0, Math.PI / 2, 0); }
+  else if (s.pen === 'drop' && s.drop) { freeG.position.set(s.drop.x, s.drop.y, el(paperG.matrix, 2, 3) + 5); freeG.rotation.set(0, 0, 0.6); } // leži
 }
 let penTip = null;
 
 // animacija zloma: konica odleti, drobci grafita, rdeč obroč na papirju (teče v realnem času)
 const fx = [];
 let wasBroken = false;
-function breakFx() {
+function breakFx(tipMesh, isPen = false) { // isPen: kovinska konica kemika + modro črnilo
   const tip = new THREE.Vector3(), q = new THREE.Quaternion();
-  penTip.getWorldPosition(tip); penTip.getWorldQuaternion(q);
+  tipMesh.getWorldPosition(tip); tipMesh.getWorldQuaternion(q);
   const floor = tip.y - 2;
   const add = (m, v, spin, life) => { m.position.copy(tip); scene.add(m); fx.push({ m, v, spin, life, t: 0, floor, s0: m.scale.x }); };
   const rnd = (a, b) => a + Math.random() * (b - a);
   const piece = new THREE.Group(); // odlomljena konica s koščkom lesa
-  piece.add(mesh(new THREE.ConeGeometry(4.5, 10, 16), MT.graphite), mesh(new THREE.CylinderGeometry(4.5, 4.5, 14, 16), MT.pen, 0, -12, 0));
+  piece.add(mesh(new THREE.ConeGeometry(4.5, 10, 16), isPen ? MT.metal : MT.graphite), mesh(new THREE.CylinderGeometry(4.5, 4.5, 14, 16), isPen ? MT.clear : MT.pen, 0, -12, 0));
   piece.quaternion.copy(q); piece.scale.setScalar(2); // ponytail: 2× večja od prave, da je vidna od daleč
   const dir = rnd(0, Math.PI * 2);
   add(piece, new THREE.Vector3(Math.cos(dir) * 220, 380, Math.sin(dir) * 220), new THREE.Vector3(rnd(-14, 14), 0, rnd(-14, 14)), 3);
   for (let i = 0; i < 16; i++) { // drobci
     const a = rnd(0, Math.PI * 2), s = rnd(80, 300);
-    add(mesh(new THREE.BoxGeometry(4, 4, 4), i % 3 ? MT.graphite : MT.wood),
+    add(mesh(new THREE.BoxGeometry(4, 4, 4), isPen ? (i % 3 ? MT.blue : MT.clear) : (i % 3 ? MT.graphite : MT.wood)),
       new THREE.Vector3(Math.cos(a) * s, rnd(150, 450), Math.sin(a) * s), new THREE.Vector3(rnd(-20, 20), 0, rnd(-20, 20)), rnd(0.8, 1.5));
   }
   const ring = new THREE.Mesh(new THREE.RingGeometry(4, 6, 32), new THREE.MeshBasicMaterial({ color: 0xff3b30, transparent: true, side: THREE.DoubleSide }));
   ring.rotation.x = -Math.PI / 2; ring.position.copy(tip); ring.position.y = floor + 1; scene.add(ring);
   fx.push({ m: ring, ring: true, life: 0.9, t: 0 });
-  window.__fx = fx.length; // za preizkus: koliko delcev je nastalo
 }
 function updateFx(dt) {
   for (let i = fx.length - 1; i >= 0; i--) {
@@ -832,8 +996,9 @@ function updateFx(dt) {
   }
 }
 function clearFx() { for (const f of fx) scene.remove(f.m); fx.length = 0; wasBroken = false; }
-function setRobot(q, d, broken = false) {
-  penTip.visible = !broken; // zlomljena konica
+function setRobot(q, d, broken = false, tool = 1) {
+  penTip.visible = bicTip.visible = !broken; // zlomljena konica
+  toolG.visible = tool !== 2; gripG.visible = tool === 2;
   J[0].rotation.z = -q[0] * D2R; J[1].rotation.y = q[1] * D2R; J[2].rotation.y = q[2] * D2R;
   J[3].rotation.x = -q[3] * D2R; J[4].rotation.y = q[4] * D2R; J[5].rotation.x = -q[5] * D2R;
   penG.position.x = -Math.max(0, Math.min(SET.press, d)); // vzmet: svinčnik se potisne nazaj v držalo
@@ -945,6 +1110,11 @@ function gridLine(c, v, x0, y0, x1, y1) {
 function strokeTo(i) {
   const a = prog.samples[i - 1], b = prog.samples[i];
   if (!a || !a.ink || !b.ink) return; // svinčnik v zraku ali zlomljen
+  if (b.tool === 2) { // kemik: enakomerna modra črta
+    pctx.strokeStyle = 'rgb(28,52,170)'; pctx.lineWidth = 0.5 * SCALE; pctx.lineCap = 'round';
+    pctx.beginPath(); pctx.moveTo(...px(a.x, a.y)); pctx.lineTo(...px(b.x, b.y)); pctx.stroke();
+    paperTex.needsUpdate = true; return;
+  }
   const k = Math.min(1, (a.F + b.F) / 2 / 2); // ponytail: temnost nasiči pri ~2 N (ocena, ni izmerjene krivulje)
   const g = Math.round(165 - 140 * k);
   pctx.strokeStyle = `rgb(${g},${g},${g + 8})`; pctx.lineWidth = (0.4 + 0.8 * k) * SCALE; pctx.lineCap = 'round';
@@ -1030,16 +1200,18 @@ function stepTo(dt) {
   const q = a.q.map((v, i) => v + (b.q[i] - v) * f);
   const broken = !!prog.broken && play.t >= prog.broken.t;
   cur = { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, d: a.d + (b.d - a.d) * f, F: a.F + (b.F - a.F) * f, broken, seg: prog.segs[b.seg] || null, q };
-  setRobot(q, broken ? 0 : cur.d, broken);
+  cur.tool = b.tool; cur.s = b;
+  setRobot(q, broken || b.tool === 2 ? 0 : cur.d, broken, b.tool);
+  setPenVis(b);
   setLine(play.t > 0 && cur.seg ? cur.seg.ln : 0);
   const bn = $('#banner');
-  if (broken && bn.style.display !== 'block') { bn.textContent = `Vrstica ${prog.broken.ln}: ${prog.broken.msg}`; bn.style.display = 'block'; }
-  if (broken && !wasBroken) { wasBroken = true; breakFx(); }
+  if (broken && bn.style.display !== 'block') { bn.textContent = `⚠ vrstica ${prog.broken.ln}: ${prog.broken.msg}`; bn.style.display = 'block'; }
+  if (broken && !wasBroken) { wasBroken = true; breakFx(b.tool === 2 ? bicTip : penTip, b.tool === 2); }
 }
 function onEnd() {
   if (prog.error) {
-    const b = $('#banner'); b.textContent = `Ustavljeno – vrstica ${prog.error.ln}: ${prog.error.msg}`; b.style.display = 'block';
-  } else log('Program končan.', 'ok');
+    const b = $('#banner'); b.textContent = `✖ vrstica ${prog.error.ln}: ${prog.error.msg}`; b.style.display = 'block';
+  } else log('✔ konec', 'ok');
 }
 
 // ================= vmesnik =================
@@ -1078,10 +1250,11 @@ function log(msg, cls = 'i', ln) {
 function reportCompile() {
   $('#log').innerHTML = '';
   const ink = prog.samples.reduce((s, b, i) => { const a = prog.samples[i - 1]; return a && a.ink && b.ink ? s + Math.hypot(b.x - a.x, b.y - a.y) : s; }, 0);
-  for (const n of prog.notes) log(`vrstica ${n.ln}: ${n.msg}`, 'i', n.ln);
-  if (prog.broken) log(`⚠ vrstica ${prog.broken.ln}: ${prog.broken.msg}. Robot nadaljuje, a ne riše več.`, 'e', prog.broken.ln);
+  for (const n of prog.notes) log(`ℹ vrstica ${n.ln}: ${n.msg}`, 'i', n.ln);
+  if (prog.broken) log(`⚠ vrstica ${prog.broken.ln}: ${prog.broken.msg}`, 'e', prog.broken.ln);
+  if (prog.dropLn) log(`⚠ vrstica ${prog.dropLn}: kemik pade`, 'e', prog.dropLn);
   if (prog.error) log(`✖ vrstica ${prog.error.ln}: ${prog.error.msg}`, 'e', prog.error.ln);
-  else log(`${prog.broken ? '⚠ Program se izvede, svinčnik pa se zlomi' : '✔ Program OK'} – ${prog.segs.length} gibov, ${prog.duration.toFixed(1)} s, narisano ${ink.toFixed(0)} mm črte.`, prog.broken ? 'e' : 'ok');
+  else log(`${prog.broken ? '⚠' : '✔'} ${prog.segs.length} gibov · ${prog.duration.toFixed(1)} s · ${ink.toFixed(0)} mm`, prog.broken ? 'e' : 'ok');
   errLine = prog.error ? prog.error.ln : 0; syncEditor();
 }
 
@@ -1129,7 +1302,9 @@ $('#file').onchange = async e => { // .dat pred .src, da so točke deklarirane
 };
 
 // nastavitve
-const sIn = { tool: $('#sTool'), press: $('#sPress'), spring: $('#sSpring'), preload: $('#sPreload'), breakF: $('#sBreak'), bendF: $('#sBend'), vcp: $('#sVcp') };
+const sIn = { tool: $('#sTool'), press: $('#sPress'), spring: $('#sSpring'), preload: $('#sPreload'), breakF: $('#sBreak'), bendF: $('#sBend'), penLen: $('#sPenLen'), penK: $('#sPenK'), penBreak: $('#sPenBreak'), vcp: $('#sVcp') };
+$('#toolSel').value = SET.toolId;
+$('#toolSel').onchange = e => { SET.toolId = +e.target.value; store.set('krl.set', SET); recompileNow(); };
 for (const [k, inp] of Object.entries(sIn)) {
   inp.value = SET[k];
   inp.onchange = () => {
@@ -1160,7 +1335,7 @@ $('#bgrid').addEventListener('input', e => {
 $('#baseDef').onclick = () => { Object.assign(baseVal, aggToFrame(parseAgg(DEF_SET.paper, 0))); showBase(); applyBase(); };
 $('#baseSet').onclick = () => { // base robota takoj = deska; robot nazaj na začetek programa
   clearTimeout(baseTmr); SET.paper = baseStr(); store.set('krl.set', SET); placePaper(); recompileNow();
-  log(`Base robota (BASE_DATA[1]) nastavljen: ${SET.paper}`, 'ok');
+  log('✔ base nastavljen', 'ok');
 };
 showBase();
 
@@ -1170,16 +1345,19 @@ $('#sPath').onchange = e => { SET.showPath = e.target.checked; store.set('krl.se
 // stanje robota
 const statusEl = $('#status');
 function drawStatus() {
-  const q = cur.q || HOME, T = fk(q, Tr(SET.tool, 0, 0));
+  const bic = cur.tool === 2, q = cur.q || HOME, T = fk(q, toolMatrix(cur.tool || SET.toolId));
   const f = toFrame(cur.seg ? cur.seg.baseInv.clone().multiply(T) : T);
   const row = (k, v) => `<div class="row"><span>${k}</span><span>${v}</span></div>`;
-  const F = cur.F || 0, pct = Math.max(0, Math.min(1, F / SET.breakF));
+  const Fmax = bic ? SET.penBreak : SET.breakF, F = cur.F || 0, pct = Math.max(0, Math.min(1, F / Fmax));
   const pen = cur.broken ? `<span style="color:var(--err)">ZLOMLJEN</span>`
-    : cur.d > -0.01 ? `riše · ${F.toFixed(1)} N / ${SET.breakF} N · vdor ${cur.d.toFixed(1)} mm` : `v zraku · ${(-cur.d).toFixed(1)} mm`;
+    : cur.d > -0.01 ? `riše · ${F.toFixed(1)} N / ${Fmax} N` : cur.d < -999 ? 'izven deske' : `v zraku · ${(-cur.d).toFixed(1)} mm`;
   statusEl.innerHTML = '<h4>Osi</h4>' + q.map((v, i) => row('A' + (i + 1), v.toFixed(2) + '°')).join('')
     + `<h4>TCP v ${cur.seg ? '$BASE' : 'WORLD'}</h4>` + ['x', 'y', 'z'].map(k => row(k.toUpperCase(), f[k].toFixed(2))).join('')
     + ['a', 'b', 'c'].map(k => row(k.toUpperCase(), f[k].toFixed(2) + '°')).join('')
-    + `<h4>Svinčnik</h4>${pen}<div id="press"><i style="width:${pct * 100}%;background:${cur.broken || pct > 0.8 ? 'var(--err)' : 'var(--ok)'}"></i></div>`
+    + (cur.s && (bic || cur.s.out17 || cur.s.out18) ? `<h4>Prijemalo · ${cur.s.gripOpen ? 'odprto' : 'zaprto'}</h4>`
+      + row('$OUT[17] / [18]', `${+cur.s.out17} / ${+cur.s.out18}`) + row('$IN[17] / [18]', `${+!cur.s.gripOpen} / ${+cur.s.gripOpen}`)
+      + row('kemik', { grip: 'v prijemalu', stand: 'v stojalu', drop: '<span style="color:var(--err)">PADEL</span>' }[cur.s.pen]) : '')
+    + `<h4>${bic ? 'Kemik (prijemalo)' : 'Svinčnik'}</h4>${pen}<div id="press"><i style="width:${pct * 100}%;background:${cur.broken || pct > 0.8 ? 'var(--err)' : 'var(--ok)'}"></i></div>`
     + `<h4>Čas</h4>${play.t.toFixed(1)} / ${prog ? prog.duration.toFixed(1) : 0} s`;
 }
 
